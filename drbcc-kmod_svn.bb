@@ -3,13 +3,13 @@ SECTION = "kernel/modules"
 RDEPENDS = "kernel (${KERNEL_VERSION})"
 DEPENDS = "virtual/kernel"
 
-SRCREV = "${AUTOREV}" 
 PR = "r0"
+OWNSRCREV = "${@'$Rev$'.split()[1]}"
 
-SRC_URI="svn://dresearchfe.jira.com/svn/HYP/trunk/LINUX;module=drbcc-kmod;proto=https"
+SRC_URI="file://${PN}-sources"
 
-PV = "svnr${SRCREV}"
-S = "${WORKDIR}/drbcc-kmod"
+PV = "svnr${OWNSRCREV}"
+S = "${WORKDIR}/${PN}-sources"
 
 inherit module
 
