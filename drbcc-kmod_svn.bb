@@ -4,14 +4,13 @@ RDEPENDS = "kernel (${KERNEL_VERSION})"
 DEPENDS = "virtual/kernel"
 
 PR = "r0"
-OWNSRCREV = "${@'$Rev$'.split()[1]}"
 
 SRC_URI="file://${PN}-sources"
 
-PV = "svnr${OWNSRCREV}"
+PV = "svnr${@svn_revision(d)}"
 S = "${WORKDIR}/${PN}-sources"
 
-inherit module
+inherit module svn-helper
 
 do_install() {
 	install -d ${D}/lib/modules/${KERNEL_VERSION}/
