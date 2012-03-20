@@ -35,6 +35,10 @@
 #define BCC_MAGIC			22
 #define BCC_TTY_MAJOR			123
 
+extern int chrdev_open(struct inode * inode, struct file * filp);
+struct inode ino; 
+struct file filp;
+struct tty_struct *ttyp;
 /**
 *	\enum 	ackstate_t
 *	\brief	states of protocol state machine
@@ -129,7 +133,7 @@ int send_pkt(struct tty_struct *tty, unsigned char *buf, int pkt_len) {
 */
 void send_ack_msg(void) 
 {
-	send_pkt(_the_bcc.tty, create_ack_buf(toggle_t.rx, tx_buff), ACK_LEN);
+	send_pkt(ttyp, create_ack_buf(toggle_t.rx, tx_buff), ACK_LEN);
 	DBG("Sent ACK message.");
 }
 	
@@ -140,25 +144,16 @@ void send_sync_msg(void)
 {
 	int ret, i; 
 
-	printk(KERN_INFO "******** _the_bcc.tty->buf.head: %s", (_the_bcc.tty->buf.head == NULL)?"true":"false");
-	
-	DBG("Synchronize toggle bits.");
-	DBGF("low latency: %x", _the_bcc.tty->low_latency);
-	DBGF("minimum_to_wake: %x", _the_bcc.tty->minimum_to_wake);
-	DBGF("MIN_CHAR: %x", MIN_CHAR(_the_bcc.tty));
-	DBGF("tty->termios->c_lflag = %d", (_the_bcc.tty->termios->c_lflag & ICANON)?1:0);
-	
 	ackstate = WAIT_FOR_SYNC_ACK;
-//	_the_bcc.tty->low_latency = 1;
 	
 	for (i = 0; i < RESEND_THRESHOLD;) {
-		send_pkt(_the_bcc.tty, create_sync_buf(tx_buff), SYNC_LEN);
+		send_pkt(ttyp, create_sync_buf(tx_buff), SYNC_LEN);
 /*		_the_bcc.tty->driver->unthrottle(_the_bcc.tty);
 		_the_bcc.tty->driver->flush_buffer(_the_bcc.tty);
 		tty_flip_buffer_push(_the_bcc.tty);
 */	
-	if (_the_bcc.tty->driver->flush_chars)
-		_the_bcc.tty->driver->flush_chars(_the_bcc.tty);
+	if (ttyp->driver->flush_chars)
+		ttyp->driver->flush_chars(ttyp);
 
 		ret = wait_for_completion_interruptible_timeout(&sync_ack, 2*BCC_PKT_TIMEOUT);
 		if (ret == 0) {
@@ -194,6 +189,11 @@ int transmit_packet(struct bcc_packet * pkt, uint8_t resp_cmd)
 	int pkt_len;
 	int ret = 0;
 	uint8_t send_cnt = 0;
+
+	if (!ttyp) {
+		printk(KERN_INFO "%s TTY in bcc struct was null.\n", BCC);
+		goto out;
+	}
 	
 	pkt->cmd = ((pkt->cmd & ~TOGGLE_BITMASK) | TOGGLE(toggle_t.tx));
 	
@@ -208,14 +208,8 @@ int transmit_packet(struct bcc_packet * pkt, uint8_t resp_cmd)
 	memset(tx_buff, 0, (sizeof(tx_buff)/sizeof(tx_buff[0])));	
 	pkt_len = serialize_packet(pkt, tx_buff);
 
-	if (!_the_bcc.tty) {
-		printk(KERN_INFO "%s TTY in bcc struct was null.\n", BCC);
-		/* TODO: Failure code */
-		ret = -EFAULT;
-		goto out;
-	}
-	
-	_the_bcc.tty->receive_room = MSG_MAX_BUFF; 
+	// FIXME: Needed?:
+	ttyp->receive_room = MSG_MAX_BUFF; 
 
 	for(send_cnt = 0; send_cnt < RESEND_THRESHOLD; ) {
 		if(ackstate == WAIT_FOR_SYNC_ACK) {
@@ -230,7 +224,7 @@ int transmit_packet(struct bcc_packet * pkt, uint8_t resp_cmd)
 		DBGF("Toggle bit: %x", toggle_t.tx);
 		DBGF("(1): raw wants to send packet with cmd %d (%x) and to receive packet with cmd %d (%x)", pkt->cmd, pkt->cmd, 
 		RSP_CMD(pkt->cmd), RSP_CMD(pkt->cmd));
-		ret = send_pkt(_the_bcc.tty, tx_buff, pkt_len);
+		ret = send_pkt(ttyp, tx_buff, pkt_len);
 		ackstate = WAIT_FOR_ACK;
 		if(ret < 0) {
 			DBGF("Error %d returned by send_pkt function.", ret);
@@ -280,29 +274,6 @@ static void bcc_set_room(struct tty_struct *tty)
 
 /* Let's begin with implementing the ldisc interface functions now. */
 
-/* Taken from the board controller rtc hack, see LINUX/rtc-drbcc */
-void set_initial_termios(struct tty_struct *tty)
-{
-        speed_t speed = B921600;
-
-        /* set terminal raw like cfmakeraw does (see manpage) */
-	tty->termios->c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
-	tty->termios->c_oflag &= ~OPOST;
-	tty->termios->c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
-	tty->termios->c_cflag &= ~(CSIZE | PARENB);
-	tty->termios->c_cflag |= CS8;
-
-                /* set baud rate like cfsetospeed does (see glibc sources) */
-#ifdef _HAVE_STRUCT_TERMIOS_C_OSPEED
-	tty->termios->c_ospeed = speed;
-#endif
-        tty->termios->c_cflag &= ~(CBAUD | CBAUDEX);
-        tty->termios->c_cflag |= speed;
-
-        /* set 1 stop bit */
-        tty->termios->c_cflag &= ~CSTOPB;
-}
-
 static void bcc_set_termios (struct tty_struct *tty, struct ktermios * old) 
 {
 
@@ -315,6 +286,48 @@ static void bcc_set_termios (struct tty_struct *tty, struct ktermios * old)
 	tty->icanon = (L_ICANON(tty) != 0);
 
 	//tty->termios = &tty_std_termios;
+}
+
+// TODO: fusion both functions, bcc_set_termios and set_default_termios? 
+static void set_default_termios(struct tty_struct *tty) {
+	//tty->termios = &tty_std_termios;
+	struct ktermios *tios = tty->termios;
+	
+
+	/* set terminal raw like cfmakeraw does (see manpage) */
+	tios->c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
+	tios->c_oflag &= ~OPOST;
+	tios->c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
+	tios->c_cflag &= ~(CSIZE | PARENB);
+	tios->c_cflag |= CS8;
+
+	/* set baud rate like cfsetospeed does (see glibc sources) */
+//#ifdef _HAVE_STRUCT_TERMIOS_C_OSPEED
+	tios->c_ospeed = B921600;
+//#endif
+	tios->c_cflag &= ~(CBAUD | CBAUDEX);
+	tios->c_cflag |= B921600;
+
+	/* set 1 stop bit */
+	tios->c_cflag &= ~CSTOPB;
+
+
+//	tty->termios->c_cflag |= B921600 | CS8 | CSTOPB;
+		
+/*	
+	termios->c_iflag = ICRNL | IXON;
+	termios->c_oflag = 0;
+	termios->c_lflag = ISIG | ICANON;
+	termios->c_iflag = 0;
+	termios->c_lflag &= ~ICANON;
+	termios->c_lflag |= ECHO | ECHOE | ECHOK |
+	ECHOCTL | ECHOKE | IEXTEN;
+	termios->c_oflag |= OPOST | ONLCR;
+	termios->c_iflag = 0;
+	termios->c_lflag &= ~(ISIG | ICANON);
+	termios->c_cc[VMIN] = 1;
+	termios->c_cc[VTIME] = 0;
+*/
 }
 
 
@@ -343,7 +356,9 @@ static int bcc_open (struct tty_struct *tty)
 		DBGF("Already opened by (%s) and pretty busy", werwardas);
 		return -EBUSY;
 	}
-
+	
+	_the_bcc.opened++;
+	
 	tty->receive_room = MSG_MAX_BUFF;
 	do_throttle(0, tty);
 	// bcc_set_termios(tty, NULL);
@@ -351,8 +366,12 @@ static int bcc_open (struct tty_struct *tty)
 	
 	/* Every entry point will now have access to our private data structure */
 	tty->disc_data = &_the_bcc;
-	/* TODO: Needed? */
-	_the_bcc.tty = tty;
+	/* FIXME: Needed? */
+	// memcpy(_the_bcc.tty, tty, sizeof(*(_the_bcc.tty)));
+
+	ttyp = tty;	// debugtty
+	printk("___ TTY state: %s\n", (tty->driver_data == NULL)?"NULL":"gesetzt"); // debugtty
+	
 
 	if (tty->driver) {
 		printk("+++++++ driver set in tty struct. ");
@@ -370,50 +389,12 @@ static int bcc_open (struct tty_struct *tty)
 	*/
 //	tty->low_latency = 1;
 //	tty->minimum_to_wake = 3;
-/*
-	tty->termios->c_iflag = ~(IGNBRK | BRKINT | PARMRK | ISTRIP
-                | INLCR | IGNCR | ICRNL | IXON);
-	tty->termios->c_oflag = ~OPOST;
-	tty->termios->c_lflag = ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
-	tty->termios->c_cflag = ~(CSIZE | PARENB | CSTOPB);
-	tty->termios->c_cflag |= CS8;
-	tty->termios->c_ospeed = B921600;
+	set_default_termios(tty);
+	
+/*	if (_the_bcc.opened) {
+		return 0; 
+	}
 */
-
-/*
-struct ktermios *termios = tty->termios;
-
- termios->c_iflag = ICRNL | IXON;
-termios->c_oflag = 0;
-termios->c_lflag = ISIG | ICANON;
-termios->c_iflag = 0;
-termios->c_lflag &= ~ICANON;
-termios->c_lflag |= ECHO | ECHOE | ECHOK |
-ECHOCTL | ECHOKE | IEXTEN;
-termios->c_oflag |= OPOST | ONLCR;
-termios->c_iflag = 0;
-termios->c_lflag &= ~(ISIG | ICANON);
-termios->c_cc[VMIN] = 1;
-termios->c_cc[VTIME] = 0;
-*/
-
-
-/*	tty->termios->c_cc[VMIN] = 1;
-	tty->termios->c_cc[VTIME] = 0;
-	tty->termios->c_lflag &= ~ICANON;*/
-/*	DBGF("low latency: %x", tty->low_latency);
-
-	DBGF("tty->termios->c_cc[VTIME] : %x", tty->termios->c_cc[VTIME] );
-	DBGF("tty->termios->c_cc[VMIN] : %x", tty->termios->c_cc[VMIN]);
-	DBGF("minimum_to_wake: %x", tty->minimum_to_wake);
-	DBGF("MIN_CHAR: %x", MIN_CHAR(tty));*/
-/*	tty->read_buf = kzalloc (BCC_TTY_BUFF_SIZE, GFP_KERNEL);
-	if (!tty->read_buf) {
-		ERR("malloc(%d) failed\n", sizeof(_the_bcc));
-		err = -ENOMEM;
-		goto err_free_read_buf;
-	}*/
-
 	if(tty->driver == NULL) {
 		DBG("No driver set in tty");
 	} else {
@@ -423,23 +404,7 @@ termios->c_cc[VTIME] = 0;
 			(tty->driver->subtype == SERIAL_TYPE_NORMAL)?"YES":"NO");
 	}
 
-	/* TFM FIXME: HACK ALERT */
-	_the_bcc.opened++;
-	strncpy(werwardas, current->comm, sizeof(current->comm));
-
-	set_initial_termios(tty);
-	
 	return 0;
-	
-//	bcc_ldisc = tty_ldisc_get(N_TTY);
-//TODO	bcc_set_termios(tty, NULL);	
-	
-/* err_free_read_buf:
-	ERR("err_free_read_buf because allocating buffer for tty->read_buf.");
-	tty->read_buf = NULL;	
-	tty->disc_data = NULL;
-
-	return err; */
 }
 
 
@@ -452,6 +417,11 @@ void bcc_close (struct tty_struct *tty)
 	struct bcc_struct *bcc;
 	
 	DBG("Close line discipline.");
+		
+	if(_the_bcc.opened)
+		return;;	
+	
+	_the_bcc.opened--;
 
 /*
 	DBGF("tty->termios->c_iflag = %u, %u", tty->termios->c_iflag, ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON));
@@ -475,11 +445,12 @@ void bcc_close (struct tty_struct *tty)
 
 	bcc = (struct bcc_struct*) tty->disc_data;
 	tty->disc_data = NULL;
+	ttyp = NULL;	// debugtty
+
+	// TODO/FIXME: close chrdev /dev/ttyS0
 
 	DBG("Freed bcc_struct");
 	/* TFM FIXME: HACK ALERT */
-	bcc->opened--;
-	bcc->tty = NULL;
 }
 
 /* is this interrupt context? shall one create a bottom half? */
@@ -765,6 +736,14 @@ int __drbcc_init(void)
 		DBG("Registering line discipline failed.");
 		return err;
 	}
+	
+	memset(&ino, 0, sizeof(ino));
+	memset(&filp, 0, sizeof(filp));
+	ino.i_rdev = MKDEV(4,64);
+ 	filp.f_u.fu_list.next = &filp.f_u.fu_list;
+ 	filp.f_u.fu_list.prev = &filp.f_u.fu_list;
+
+	chrdev_open(&ino, &filp);	
 
 	DBG("Test debug");	
 	return 0;
@@ -780,7 +759,7 @@ void __drbcc_exit(void) {
 		printk(KERN_WARNING "DRBCC: %d open file descriptors on line discipline's serial device file.\n", _the_bcc.opened);
 
 		/* Hangup here ... */
-		tty_hangup(_the_bcc.tty);		
+		tty_hangup(ttyp);		
 
 		if (0 == _the_bcc.opened)
 			break;
