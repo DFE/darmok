@@ -48,6 +48,7 @@ typedef enum {
 	ACK_RECEIVED = 1,
 	ACK_UNDEFINED = 2,
 	WAIT_FOR_SYNC_ACK = 3,
+	ERR = 4
 } ackstate_t;
 
 static uint8_t ackstate = ACK_UNDEFINED;
@@ -71,7 +72,7 @@ struct bcc_struct {
 	struct tty_struct	*tty;		/**< struct representing serial port */ 
 	struct semaphore		access;
 	
-	struct bcc_packet 	*curr;		/**< Pointer to packet struct we receive from the frontend drivers */
+	struct bcc_packet 	*curr;		/**< Pointer to packet struct we receive from the frontend drivers; here we copy the answer as well  */
 /* FIXME: Müssen/Sollten die beiden folgenden Elemente static sein? */
 	struct bcc_packet 	temp;		/**< Structure, where the parsing result of the packets from the serial driver are saved in */
 };
@@ -113,6 +114,10 @@ int send_pkt(struct tty_struct *tty, unsigned char *buf, int pkt_len) {
 	if(_the_bcc.initial) {
 		_the_bcc.initial--;
 		send_sync_msg();
+		if (ackstate == ERR) {
+			_the_bcc.initial++;
+			return -EFAULT;
+		}
 		ackstate = WAIT_FOR_ACK;
 	}
 
@@ -133,8 +138,11 @@ int send_pkt(struct tty_struct *tty, unsigned char *buf, int pkt_len) {
 */
 void send_ack_msg(void) 
 {
-	send_pkt(ttyp, create_ack_buf(toggle_t.rx, tx_buff), ACK_LEN);
-	DBG("Sent ACK message.");
+	if (likely(send_pkt(ttyp, create_ack_buf(toggle_t.rx, tx_buff), ACK_LEN) >= 0)) {
+		DBG("Sent ACK message.");
+	} else {
+		DBG("Sending initial ");
+	}
 }
 	
 /**
@@ -167,6 +175,7 @@ void send_sync_msg(void)
 					DBG("_the_bcc.temp");
 					_the_bcc.temp.cmd = DRBCC_TIMEOUT;
 				}
+				ackstate = ERR;
 				return;
 			}
 		} else {
@@ -191,7 +200,7 @@ int transmit_packet(struct bcc_packet * pkt, uint8_t resp_cmd)
 	uint8_t send_cnt = 0;
 
 	if (!ttyp) {
-		printk(KERN_INFO "%s TTY in bcc struct was null.\n", BCC);
+		printk(KERN_INFO "%s TTYP was null.\n", BCC);
 		goto out;
 	}
 	
@@ -223,7 +232,7 @@ int transmit_packet(struct bcc_packet * pkt, uint8_t resp_cmd)
 		toggle_t.tx = ((pkt->cmd & TOGGLE_BITMASK) >> 7)?1:0;
 		DBGF("Toggle bit: %x", toggle_t.tx);
 		DBGF("(1): raw wants to send packet with cmd %d (%x) and to receive packet with cmd %d (%x)", pkt->cmd, pkt->cmd, 
-		RSP_CMD(pkt->cmd), RSP_CMD(pkt->cmd));
+			RSP_CMD(pkt->cmd), RSP_CMD(pkt->cmd));
 		ret = send_pkt(ttyp, tx_buff, pkt_len);
 		ackstate = WAIT_FOR_ACK;
 		if(ret < 0) {
@@ -453,6 +462,100 @@ void bcc_close (struct tty_struct *tty)
 	/* TFM FIXME: HACK ALERT */
 }
 
+static int statemachine_run(uint8_t cmd, struct bcc_struct *bcc, struct bcc_packet *resp) {
+#define CONTINUE 	1
+#define OUT		2
+#define BREAK		3
+	
+	switch(cmd) {	
+			case DRBCC_ACK:
+				DBG("Received ACK");
+				// TODO: receive_ack(&resp);
+				if(ackstate == WAIT_FOR_SYNC_ACK) {
+					if ((resp->cmd & TOGGLE_BITMASK) == TOGGLE(1)) {
+						DBG("Received sync ack.");
+						complete_all(&sync_ack);
+						ackstate = ACK_UNDEFINED;
+						return CONTINUE;	
+						//goto out;
+					}
+				}	
+				if(ackstate == WAIT_FOR_ACK) {	
+					if ((resp->cmd & TOGGLE_BITMASK) == TOGGLE(toggle_t.tx)) {
+						DBG("Toggle bit: OK.");
+						TOGGLE_BIT(toggle_t.tx);
+						if(RSP_CMD(_the_bcc.curr->cmd) == DRBCC_CMD_ILLEGAL){
+							DBG("No answer packets expected, therefore just returning.");
+							ackstate = ACK_RECEIVED;
+							_the_bcc.curr->cmd =  DRBCC_CMD_ILLEGAL;
+							complete(&rx_data);
+							return OUT;
+						} else {
+							DBG("Received expected ack.");
+							ackstate = ACK_RECEIVED;
+							return CONTINUE;
+							//goto out;
+						}	
+					} else {
+						DBGF("False toggle bit: %x, expected: %x", (resp->cmd & TOGGLE_BITMASK),  TOGGLE(toggle_t.tx));
+						send_sync_msg();
+						return OUT;
+					}
+				}
+				return BREAK;
+			default:
+				// TODO: receive_pkt(&resp);
+					if ((resp->cmd & TOGGLE_BITMASK) == TOGGLE(toggle_t.rx)) {
+						DBG("Toggle bit: OK.");
+					} else {
+						DBGF("False toggle bit: %x, expected: %x", (resp->cmd & TOGGLE_BITMASK), TOGGLE(toggle_t.rx));
+						send_sync_msg();
+						return OUT;
+					}
+					if(bcc->temp.cmd != DRBCC_TIMEOUT) {
+						if (cmd == RSP_CMD(bcc->curr->cmd)) {
+							if(ackstate == ACK_RECEIVED) {
+							/* TODO */
+								printk(KERN_INFO "Received expected command: %x\n", cmd);
+							/* TODO: copy pkt_len and other values */
+								resp->cmd = cmd;
+								*bcc->curr = *resp;
+								DBGF("bcc->curr->cmd = %x, bcc->curr->data = %x %x %x", bcc->curr->cmd , bcc->curr->data[0], 
+									bcc->curr->data[1], bcc->curr->data[2]);
+
+								complete(&rx_data);
+								bcc->curr = NULL;
+								//do_throttle(1, tty);
+								send_ack_msg();
+							/*	send_pkt(tty, create_ack_buf(toggle_t.rx, tx_buff), ACK_LEN);*/
+								TOGGLE_BIT(toggle_t.rx);		
+								//do_throttle(0, tty);
+							} else {
+								DBG("No ACK received for request.");
+								return OUT;
+							}
+						} else if(DRBCC_IND_STATUS == cmd) {
+							DBG("Received STATUS message or update");
+							send_ack_msg();
+							TOGGLE_BIT(toggle_t.rx);
+							return CONTINUE;
+						} else {
+							DBGF("Received unknown or unexpected command: %x; expected command: %x", 
+								cmd, RSP_CMD(bcc->curr->cmd));
+							return OUT;
+						}
+					} else {
+						ERR("Waiting for answer timed out.");	
+						return OUT;
+					}
+				return BREAK;
+			}
+			DBG("Check for message type finished successfully.");
+
+			//up(bcc->curr->sem);
+	//		_the_bcc.curr = NULL;
+}
+
 /* is this interrupt context? shall one create a bottom half? */
 
 /**
@@ -474,12 +577,6 @@ static void bcc_receive_buf(struct tty_struct *tty, const unsigned char *cp, cha
 
 	printk(KERN_INFO "Received %d bytes from driver\n", count);
 	PRINTKN(cp, count);
-
-/*	DBGF("low latency: %x", tty->low_latency);
-	DBGF("tty->termios->c_cc[VTIME] : %x", tty->termios->c_cc[VTIME] );
-	DBGF("tty->termios->c_cc[VMIN] : %x", tty->termios->c_cc[VMIN]);
-	DBGF("minimum_to_wake: %x", tty->minimum_to_wake);
-	DBGF("MIN_CHAR: %x", MIN_CHAR(tty));	*/
 
 	if (count > MSG_MAX_BUFF) {
 		ERR("Received more bytes from serial driver than I can handle.");
@@ -553,91 +650,13 @@ static void bcc_receive_buf(struct tty_struct *tty, const unsigned char *cp, cha
 			ERR("Waiting for answer timed out.");	
 			goto out;
 		}
-		switch(cmd) {	
-			case DRBCC_ACK:
-				DBG("Received ACK");
-				// TODO: receive_ack(&resp);
-				if(ackstate == WAIT_FOR_SYNC_ACK) {
-					if ((resp.cmd & TOGGLE_BITMASK) == TOGGLE(1)) {
-						DBG("Received sync ack.");
-						complete_all(&sync_ack);
-						ackstate = ACK_UNDEFINED;
-						continue;
-						//goto out;
-					}
-				}	
-				if(ackstate == WAIT_FOR_ACK) {	
-					if ((resp.cmd & TOGGLE_BITMASK) == TOGGLE(toggle_t.tx)) {
-						DBG("Toggle bit: OK.");
-						TOGGLE_BIT(toggle_t.tx);
-						if(RSP_CMD(_the_bcc.curr->cmd) == DRBCC_CMD_ILLEGAL){
-							DBG("No answer packets expected, therefore just returning.");
-							ackstate = ACK_RECEIVED;
-							_the_bcc.curr->cmd =  DRBCC_CMD_ILLEGAL;
-							complete(&rx_data);
-							goto out;
-						} else {
-							DBG("Received expected ack.");
-							ackstate = ACK_RECEIVED;
-							continue;
-							//goto out;
-						}	
-					} else {
-						DBGF("False toggle bit: %x, expected: %x", (resp.cmd & TOGGLE_BITMASK),  TOGGLE(toggle_t.tx));
-						send_sync_msg();
-						goto out;
-					}
-				}
-				break;
-			default:
-				// TODO: receive_pkt(&resp);
-					if ((resp.cmd & TOGGLE_BITMASK) == TOGGLE(toggle_t.rx)) {
-						DBG("Toggle bit: OK.");
-					} else {
-						DBGF("False toggle bit: %x, expected: %x", (resp.cmd & TOGGLE_BITMASK), TOGGLE(toggle_t.rx));
-						send_sync_msg();
-						goto out;
-					}
-					if(bcc->temp.cmd != DRBCC_TIMEOUT) {
-						if (cmd == RSP_CMD(bcc->curr->cmd)) {
-							if(ackstate == ACK_RECEIVED) {
-							/* TODO */
-								printk(KERN_INFO "Received expected command: %x\n", cmd);
-							/* TODO: copy pkt_len and other values */
-								resp.cmd = cmd;
-								*bcc->curr = resp;
-								DBGF("bcc->curr->cmd = %x, bcc->curr->data = %x %x %x", bcc->curr->cmd , bcc->curr->data[0], bcc->curr->data[1], bcc->curr->data[2]);
-								complete(&rx_data);
-								bcc->curr = NULL;
-								//do_throttle(1, tty);
-								send_ack_msg();
-							/*	send_pkt(tty, create_ack_buf(toggle_t.rx, tx_buff), ACK_LEN);*/
-								TOGGLE_BIT(toggle_t.rx);		
-								//do_throttle(0, tty);
-							} else {
-								DBG("No ACK received for request.");
-								goto out;
-							}
-						} else if(DRBCC_IND_STATUS == cmd) {
-							DBG("Received STATUS message or update");
-							send_ack_msg();
-							TOGGLE_BIT(toggle_t.rx);
-							continue;		
-						} else {
-							DBGF("Received unknown or unexpected command: %x; expected command: %x", 
-								cmd, RSP_CMD(bcc->curr->cmd));
-							goto out;
-						}
-					} else {
-						ERR("Waiting for answer timed out.");	
-						goto out;
-					}
-				break;
-			}
-			DBG("Check for message type finished successfully.");
 
-			//up(bcc->curr->sem);
-	//		_the_bcc.curr = NULL;
+		ret = statemachine_run(cmd, bcc, &resp);
+		if (ret == CONTINUE)
+			continue;
+		if (ret == OUT || ret == BREAK)
+			goto out;	// or just break
+
 	} while(readc < j); 
 	out:
 //		tty->receive_room = MSG_MAX_BUFF;
