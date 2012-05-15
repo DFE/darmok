@@ -35,10 +35,8 @@
 #define BCC_MAGIC			22
 #define BCC_TTY_MAJOR			123
 
-extern int chrdev_open(struct inode * inode, struct file * filp);
-struct inode ino; 
-struct file filp;
-struct tty_struct *ttyp;
+#define DEBUG
+
 /**
 *	\enum 	ackstate_t
 *	\brief	states of protocol state machine
@@ -48,15 +46,15 @@ typedef enum {
 	ACK_RECEIVED = 1,
 	ACK_UNDEFINED = 2,
 	WAIT_FOR_SYNC_ACK = 3,
-	ERR = 4
 } ackstate_t;
 
 static uint8_t ackstate = ACK_UNDEFINED;
 DECLARE_COMPLETION(rx_data);
-DECLARE_COMPLETION(sync_ack);
+DECLARE_COMPLETION(transaction);
 
 #define RESEND_SYNC_THRESHOLD	2	
 #define RESEND_THRESHOLD	2	
+#define RX_CURR_BUF_CNT		2
 
 #ifndef BCC
 #define BCC "[DRBCC_CORE] "
@@ -70,11 +68,19 @@ struct bcc_struct {
 	unsigned int 		opened;		/**< int to assure our ldisc singleton pattern */
 	unsigned int 		initial; 	/**< if initial, send synchronisation messages before first packet send */
 	struct tty_struct	*tty;		/**< struct representing serial port */ 
-	struct semaphore		access;
+	struct semaphore	access;
 	
-	struct bcc_packet 	*curr;		/**< Pointer to packet struct we receive from the frontend drivers; here we copy the answer as well  */
+	/****** For communication between Layer 1-and-2 only *****/
+	struct bcc_packet 	*curr;		/**< Pointer to packet struct we receive from the frontend drivers */
+	struct bcc_packet 	resp;		
 /* FIXME: Müssen/Sollten die beiden folgenden Elemente static sein? */
-	struct bcc_packet 	temp;		/**< Structure, where the parsing result of the packets from the serial driver are saved in */
+	// TODO: array without count?
+	struct bcc_packet 	temp_rx[RX_CURR_BUF_CNT];		/**< Structure, where the parsing result of the packets from the serial driver are saved in */
+	// TODO struct buf_cnt 	{
+	unsigned short 		temp_rx_read_cnt : RX_CURR_BUF_CNT;
+	unsigned short 		temp_rx_write_cnt : RX_CURR_BUF_CNT;
+	// TODO } rx_buf_cnt;
+	struct bcc_packet 	temp_tx;		/**< Structure, where the parsing result of the packets to be send by the serial driver are saved in */
 };
 
 struct class *drbcc_class;
@@ -83,6 +89,8 @@ static struct bcc_struct _the_bcc = {
 	.opened = 0,
 	.initial = 1,
 
+	.temp_rx_write_cnt = 0,
+	.temp_rx_read_cnt = 0,
 	/* How shall this be initialised? */
 /* TODO	.access.count = 1,
 	.response.count = 0, */
@@ -98,93 +106,322 @@ static struct toggle toggle_t = {
 	.tx = 0,
 };
 
-void send_sync_msg(void);
-
-/**
-*	Give buffer to serial driver to be sent out.
-*	\param	tty 		struct representing serial port 
-*	\param	buf		char buffer of message to send
-*	\param	pkt_len		integer to delimit buffer boundary 	
-*
-*	\return bytes sent on succes, negative value on failure
+/*
+* Layer 3 functions:
 */
-int send_pkt(struct tty_struct *tty, unsigned char *buf, int pkt_len) {
-	int ret = 0;
-	
-	if(_the_bcc.initial) {
-		_the_bcc.initial--;
-		send_sync_msg();
-		if (ackstate == ERR) {
-			_the_bcc.initial++;
-			return -EFAULT;
-		}
-		ackstate = WAIT_FOR_ACK;
-	}
+int send_sync_msg(void);
+int send_msg(void);
+int send_msg_ans(void);
+
+/*
+* Layer 2 functions:
+* Transactionbased: Request-response-logic
+* Keeps track of the toggle bits
+*/
+int perform_transaction(void);
+int perform_transaction_ans(void);
+
+/*
+* Layer 1 functions:
+* Parsing: char[] <==> struct bcc_struct
+*/
+int synchronize(void);
+int transmit_msg(void);
+void transmit_ack(void); 
+void receive_msg(unsigned char *buf, uint8_t len);
+
+/*
+* Return codes for inter-layer-communication
+*/
+#define ACK_RECEIVED 	10
+
+/*
+*
+***********   LAYER 1  ***************
+*/
+int transmit_msg(void) 
+{
+	int pkt_len, ret = 0;
+	struct tty_struct *tty = _the_bcc.tty;
+	struct bcc_packet *pkt = &_the_bcc.temp_tx;
 
 	if (tty->driver && tty->driver->write) {
-		printk(KERN_INFO "%s Transmitting packet (cmd = %x) through driver.\n", BCC, *(buf+1));
-		ret = tty->driver->write(tty, buf, pkt_len);
+		memset(tx_buff, 0, (sizeof(tx_buff)/sizeof(tx_buff[0])));	
+		pkt_len = serialize_packet(pkt, tx_buff);
+		
+		pkt->cmd = ((pkt->cmd & ~TOGGLE_BITMASK) | TOGGLE_SHIFT(toggle_t.tx)); // FIXME: better macro or delete this comment
+	
+		printk(KERN_INFO "%s Transmitting packet (cmd = %x) through driver.\n", BCC, *(tx_buff+1));
+		PRINTKN(tx_buff, 10);
+		ret = tty->driver->write(tty, tx_buff, pkt_len);
 		DBGF("Driver returned: %d", ret);
 	} else {
 		printk(KERN_INFO "%s No driver or driver write function defined in bcc struct.\n", BCC);
 		/* TODO: Failure code */
 		ret = -EFAULT;
 	}
+	
 	return ret;	
 }
 
-/**
-*	Create ack buffer and send out ACK message
-*/
-void send_ack_msg(void) 
+/* Why a void function? Because I don't care! */
+void transmit_ack(void) 
 {
-	if (likely(send_pkt(ttyp, create_ack_buf(toggle_t.rx, tx_buff), ACK_LEN) >= 0)) {
-		DBG("Sent ACK message.");
-	} else {
-		DBG("Sending initial ");
-	}
-}
+#define ACK_BUF_RX_0 (char[]){0xfa, 0x00, 0x87, 0x0f, 0xfb}
+#define ACK_BUF_RX_1 (char[]){0xfa, 0x80, 0x8f, 0x8b, 0xfb}
+	int ret = 0;
+	struct tty_struct *tty = _the_bcc.tty;
 	
-/**
-*	Create sync buffer and send out synchronistaion message
-*/
-void send_sync_msg(void)
-{
-	int ret, i; 
+	if (tty->driver && tty->driver->write) {
+		printk(KERN_INFO "%s Transmitting ack through driver.\n", BCC);
 
-	ackstate = WAIT_FOR_SYNC_ACK;
-	
-	for (i = 0; i < RESEND_THRESHOLD;) {
-		send_pkt(ttyp, create_sync_buf(tx_buff), SYNC_LEN);
-/*		_the_bcc.tty->driver->unthrottle(_the_bcc.tty);
-		_the_bcc.tty->driver->flush_buffer(_the_bcc.tty);
-		tty_flip_buffer_push(_the_bcc.tty);
-*/	
-	if (ttyp->driver->flush_chars)
-		ttyp->driver->flush_chars(ttyp);
-
-		ret = wait_for_completion_interruptible_timeout(&sync_ack, 2*BCC_PKT_TIMEOUT);
-		if (ret == 0) {
-			ERR("Received no ACK message for my sync request. ");
-			i++;
-			if (i >= RESEND_SYNC_THRESHOLD) {
-				if(_the_bcc.curr) {
-					DBG("_the_bcc.curr");
-					_the_bcc.curr->cmd = DRBCC_TIMEOUT;
-				} else {
-					DBG("_the_bcc.temp");
-					_the_bcc.temp.cmd = DRBCC_TIMEOUT;
-				}
-				ackstate = ERR;
-				return;
-			}
+		if(toggle_t.rx) {
+/* TODO: I need an ACK Buffer!! */ 
+			ret = tty->driver->write(tty, ACK_BUF_RX_0, 5);
 		} else {
+			ret = tty->driver->write(tty, ACK_BUF_RX_1, 5);
+		}
+		DBGF("Driver returned: %d", ret);
+	} 
+}
+
+// TODO: Asynchronous status updates
+void receive_msg(unsigned char *buf, uint8_t len)
+{
+	uint8_t		readc = 0;
+	int 		ret = 0;
+
+	do {
+		memset(&_the_bcc.temp_rx[_the_bcc.temp_rx_write_cnt], 0, sizeof(struct bcc_packet));
+		
+		ret = deserialize_packet(&buf[readc], &_the_bcc.temp_rx[_the_bcc.temp_rx_write_cnt], len-readc);
+
+		if(ret >= 0) {
+			DBG("Succeeded parsing message to struct bcc_packet");
+		} else if(ret == -EAGAIN) {
+			DBG("No full packet parsed, try again later");
+			/* Throttle is still 0 here */
+	//		do_throttle(1, tty);
+			return;
+		} else if(ret < 0) {
+			DBG("Failure while parsing packet.");
+			return;
+		}	
+		
+// TODO: work queue? semaphor? 
+		complete(&transaction);	
+		schedule();	
+	
+		// FIXME: increase is atomic? or does it not matter, 
+		// because the receive_msg function is kinda atomic?
+		_the_bcc.temp_rx_write_cnt++;
+		
+		readc += (ret + MSG_MIN_LEN);
+		DBGF("readc = %d", readc);
+
+	
+		printk(KERN_DEBUG "______Command: %d (%x)__________\n", 
+			_the_bcc.temp_rx[_the_bcc.temp_rx_write_cnt-1].cmd, 
+			_the_bcc.temp_rx[_the_bcc.temp_rx_write_cnt-1].cmd);
+
+		
+	} while(readc < len); 
+}
+
+/*	Possible buffers that can be received:
+*	ACK
+*	MSG
+*	ACK + MSG
+* 	--> ACK + MSG + MSG (Status update) ??
+*/
+static void bcc_receive_buf(struct tty_struct *tty, const unsigned char *cp, char *fp, int count) 
+{
+	unsigned char 			newbuf[MSG_MAX_BUFF];
+	uint8_t				i, j;
+	const unsigned char 		*p;
+	char				*f, flags = TTY_NORMAL;
+
+	printk(KERN_INFO "Received %d bytes from driver\n", count);
+	PRINTKN(cp, count);
+
+	if (count > MSG_MAX_BUFF) {
+		ERR("Received more bytes from serial driver than I can handle.");
+		return;
+	}
+
+//	tty->receive_room -= count; 
+	memset(newbuf, 0, MSG_MAX_BUFF);
+
+// FIXME: put into separate function?: 
+	for(j = 0, i = count, p = cp, f = fp; i; i--, p++) {
+		if(f)
+			flags = *f++;
+		switch (flags) {
+		case TTY_NORMAL:	
+			newbuf[j] = *p;
+//			DBGF("Char %d (%x)", newbuf[j], newbuf[j]);
+			j++;
 			break;
+		case TTY_OVERRUN:
+			DBG("TTY-Overun occured");
+//			do_throttle(1, tty);
+			break;	
+		default:
+			DBGF("Flags at nr. %d was: %x", count-i, flags);
+			break;
+		}
+	}
+
+// TODO: remove all PRINTKNs
+	PRINTKN(newbuf, j);
+	receive_msg(newbuf, j);
+}
+
+/*
+*
+***********   LAYER 2   ***************
+*/
+int synchronize(void)
+{
+	int ret = 0;
+	struct bcc_packet *save = _the_bcc.curr;
+
+	_the_bcc.curr = &((struct bcc_packet) { 
+		.cmd = DRBCC_SYNC, 
+		.payloadlen = 0 });
+
+	ret = perform_transaction();
+	printk("***** Transmitted sync \n");	
+	
+	if (ret < 0) {
+		DBGF("Error %d occured on sync", ret);
+	}
+	
+	DBGF("**** 1 _the_bcc.curr->cmd = %d\n", _the_bcc.curr->cmd);
+	_the_bcc.curr = save;
+	DBGF("**** 2 _the_bcc.curr->cmd = %d\n", _the_bcc.curr->cmd);
+	return ret;
+}
+
+
+#define MAX_FAILED_PKT 3
+int perform_transaction(void) 
+{
+	int i = 0;
+	int ret = 0;
+
+	DBGF("**** _the_bcc.curr->cmd = %d\n", _the_bcc.curr->cmd);
+
+	if(_the_bcc.initial) {
+		_the_bcc.initial--;
+		ret = synchronize();
+		if (ret < 0) {
+                	return ret;
 		}	
 	}
-	toggle_t.tx = 0;
-	toggle_t.rx = 0;
+	
+	DBGF("**** _the_bcc.curr->cmd = %d\n", _the_bcc.curr->cmd);
+	_the_bcc.temp_tx = *(_the_bcc.curr);
+
+	ret = transmit_msg();
+	if (ret < 0) {
+		DBGF("Error %d returned by transmit_msg function.", ret);
+		return ret;
+	}
+		
+	DBGF("***** Transmitted msg with cmd %d \n", _the_bcc.temp_tx.cmd);	
+
+/* TODO: Rly? hier eine do-while-Schleife? dann aber konsequent sein 
+*	und eine auch in perform_transaction_ans implementieren...
+*	bzw KANN sich jemals ein status-update zwischen ack und rsp drängen? --> Micha fragen */
+	do {
+		ret = wait_for_completion_interruptible_timeout(&transaction, 2*BCC_PKT_TIMEOUT);
+
+		if (ret == 0) {
+			ERR("Transaction failed (on 'send message').");
+			return -EFAULT; 	// is there a better return value for a timeout? e.g. -EBUSY?
+		}
+		
+		if (_the_bcc.temp_rx[_the_bcc.temp_rx_read_cnt].cmd == DRBCC_ACK) {
+			/* Sending the packet seems to have succeeded */
+			DBGF("*****Received ACK for cmd %d \n", _the_bcc.temp_tx.cmd);	
+			toggle_t.tx = !toggle_t.tx;	
+			ret = ACK_RECEIVED;
+		} else {
+			DBGF("*****No ACK received for cmd %d \n", _the_bcc.temp_tx.cmd);	
+			ret = -EFAULT;
+		}
+		_the_bcc.temp_rx_read_cnt++;
+		i++;
+
+	} while(ret < 0 && i < MAX_FAILED_PKT);
+
+	return ret;
 }
+
+
+/* TODO: check for return! if return code < 0, there is an invalid pkt in _the_bcc.resp */
+int perform_transaction_ans(void) {
+	int ret = 0;
+
+	ret = perform_transaction();
+	if (ret != ACK_RECEIVED) {
+		DBGF("***** No ack received\n");
+		return ret;
+	}
+	
+	ret = wait_for_completion_interruptible_timeout(&transaction, 2*BCC_PKT_TIMEOUT);
+	if (ret == 0) {
+		ERR("Transaction failed (on 'receive ans')."); // FIXME: write into log instead of to stdout ?
+		return -EFAULT; 	// is there a better return value for a timeout?
+	}
+	
+	_the_bcc.resp = _the_bcc.temp_rx[_the_bcc.temp_rx_read_cnt];
+	_the_bcc.temp_rx_read_cnt++;
+
+/* TODO: Layer 1 or Layer 2 job? Bei falschen Toggle wirklich einfach zurückkehren...? */	
+	if (TOGGLEB(_the_bcc.resp) == TOGGLE_SHIFT(toggle_t.rx)) {	
+		toggle_t.rx = !toggle_t.rx;	
+	} else {
+		DBGF("**** Err on toggle bit!\n");
+		ret = -EFAULT;
+	}
+		
+	/* I don't care whether sending the ack worked */
+	transmit_ack();
+	
+	return ret;	
+}
+
+
+
+int transmit_packet(struct bcc_packet * pkt, uint8_t resp_cmd)
+{
+	int ret = 0;
+
+	_the_bcc.curr = pkt;
+
+	if (resp_cmd != DRBCC_CMD_ILLEGAL) {
+		printk("**** Send transaction and expect ans\n");
+		ret = perform_transaction_ans();
+	} else {
+		printk("**** Send transaction without to expect ans\n");
+		ret = perform_transaction();
+	}
+
+	if (ret < 0) {
+		printk(KERN_WARNING "Transaction of packet with command %d failed\n", _the_bcc.curr->cmd);	
+	}
+	
+	/* TODO: implement this? */
+	if (ret != resp_cmd) {
+		printk(KERN_WARNING "Received packet with wrong response command: %d\n", _the_bcc.resp.cmd);	
+	}
+	
+	*(_the_bcc.curr) = _the_bcc.resp;
+	return ret;
+}
+EXPORT_SYMBOL(transmit_packet);
 
 /**
 *	Send out packet over serial port, does all the maintenance of the state machine (exported symbol)	
@@ -193,23 +430,18 @@ void send_sync_msg(void)
 *	\return passed return value of called functions or 0 on failure, sent bytes on success
 */
 /* TODO: remove resp_cmd from parameter list */
-int transmit_packet(struct bcc_packet * pkt, uint8_t resp_cmd)
-{
-	int pkt_len;
+//int transmit_packet(struct bcc_packet * pkt, uint8_t resp_cmd)
+//{
+/*	int pkt_len;
 	int ret = 0;
 	uint8_t send_cnt = 0;
-
-	if (!ttyp) {
-		printk(KERN_INFO "%s TTYP was null.\n", BCC);
-		goto out;
-	}
 	
 	pkt->cmd = ((pkt->cmd & ~TOGGLE_BITMASK) | TOGGLE(toggle_t.tx));
 	
 	down_interruptible(&sem_access);
 	ackstate = ACK_UNDEFINED;
-	memset(&_the_bcc.temp, 0, sizeof(_the_bcc.temp));
-	_the_bcc.temp = *pkt;
+	memset(&_the_bcc.temp_tx, 0, sizeof(_the_bcc.temp_tx));
+	_the_bcc.temp_tx = *pkt;
 	_the_bcc.curr = pkt;
 	
 	DBGF("size of tx_buff array: %d", (sizeof(tx_buff)/sizeof(tx_buff[0])));
@@ -217,8 +449,13 @@ int transmit_packet(struct bcc_packet * pkt, uint8_t resp_cmd)
 	memset(tx_buff, 0, (sizeof(tx_buff)/sizeof(tx_buff[0])));	
 	pkt_len = serialize_packet(pkt, tx_buff);
 
-	// FIXME: Needed?:
-	ttyp->receive_room = MSG_MAX_BUFF; 
+	if (!_the_bcc.tty) {
+		printk(KERN_INFO "%s TTY in bcc struct was null.\n", BCC);
+		ret = -EFAULT;
+		goto out;
+	}
+	
+	_the_bcc.tty->receive_room = MSG_MAX_BUFF; 
 
 	for(send_cnt = 0; send_cnt < RESEND_THRESHOLD; ) {
 		if(ackstate == WAIT_FOR_SYNC_ACK) {
@@ -228,12 +465,11 @@ int transmit_packet(struct bcc_packet * pkt, uint8_t resp_cmd)
 			}
 		}
 		pkt_len = serialize_packet(pkt, tx_buff);
-	/* FIXME: toggle*/
 		toggle_t.tx = ((pkt->cmd & TOGGLE_BITMASK) >> 7)?1:0;
 		DBGF("Toggle bit: %x", toggle_t.tx);
 		DBGF("(1): raw wants to send packet with cmd %d (%x) and to receive packet with cmd %d (%x)", pkt->cmd, pkt->cmd, 
-			RSP_CMD(pkt->cmd), RSP_CMD(pkt->cmd));
-		ret = send_pkt(ttyp, tx_buff, pkt_len);
+		RSP_CMD(pkt->cmd), RSP_CMD(pkt->cmd));
+		ret = send_pkt(_the_bcc.tty, tx_buff, pkt_len);
 		ackstate = WAIT_FOR_ACK;
 		if(ret < 0) {
 			DBGF("Error %d returned by send_pkt function.", ret);
@@ -261,31 +497,12 @@ out:
 	DBG("sem_access semaphore is up now");
 
 	return ret;
-}
+ }
 EXPORT_SYMBOL(transmit_packet);
-
-void do_throttle(int do_throttle, struct tty_struct *tty) {
-	if(do_throttle && !test_and_set_bit(TTY_THROTTLED, &tty->flags) 
-			&& tty->driver->throttle) {
-		DBG("Throttle tty.");
-		tty->driver->throttle(tty);
-	} else if (!do_throttle &&  test_and_clear_bit(TTY_THROTTLED, &tty->flags) 
-			&& tty->driver->unthrottle){
-		DBG("Unthrottle tty.");
-		tty->driver->unthrottle(tty);
-	}
-}
-/* TODO
-static void bcc_set_room(struct tty_struct *tty)
-{
-	tty->receive_room = 
-} */
-
-/* Let's begin with implementing the ldisc interface functions now. */
+*/
 
 static void bcc_set_termios (struct tty_struct *tty, struct ktermios * old) 
 {
-
 	DBG(".");
 
 	if(!tty) {
@@ -295,48 +512,6 @@ static void bcc_set_termios (struct tty_struct *tty, struct ktermios * old)
 	tty->icanon = (L_ICANON(tty) != 0);
 
 	//tty->termios = &tty_std_termios;
-}
-
-// TODO: fusion both functions, bcc_set_termios and set_default_termios? 
-static void set_default_termios(struct tty_struct *tty) {
-	//tty->termios = &tty_std_termios;
-	struct ktermios *tios = tty->termios;
-	
-
-	/* set terminal raw like cfmakeraw does (see manpage) */
-	tios->c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
-	tios->c_oflag &= ~OPOST;
-	tios->c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
-	tios->c_cflag &= ~(CSIZE | PARENB);
-	tios->c_cflag |= CS8;
-
-	/* set baud rate like cfsetospeed does (see glibc sources) */
-//#ifdef _HAVE_STRUCT_TERMIOS_C_OSPEED
-	tios->c_ospeed = B921600;
-//#endif
-	tios->c_cflag &= ~(CBAUD | CBAUDEX);
-	tios->c_cflag |= B921600;
-
-	/* set 1 stop bit */
-	tios->c_cflag &= ~CSTOPB;
-
-
-//	tty->termios->c_cflag |= B921600 | CS8 | CSTOPB;
-		
-/*	
-	termios->c_iflag = ICRNL | IXON;
-	termios->c_oflag = 0;
-	termios->c_lflag = ISIG | ICANON;
-	termios->c_iflag = 0;
-	termios->c_lflag &= ~ICANON;
-	termios->c_lflag |= ECHO | ECHOE | ECHOK |
-	ECHOCTL | ECHOKE | IEXTEN;
-	termios->c_oflag |= OPOST | ONLCR;
-	termios->c_iflag = 0;
-	termios->c_lflag &= ~(ISIG | ICANON);
-	termios->c_cc[VMIN] = 1;
-	termios->c_cc[VTIME] = 0;
-*/
 }
 
 
@@ -357,7 +532,7 @@ static int bcc_open (struct tty_struct *tty)
 	//int err;
 	static char werwardas[TASK_COMM_LEN] = {"gar keiner"};
 	DBG("Try to open line discipline.");
-	
+
 	if(!tty)
 		return -EINVAL;
 	
@@ -365,22 +540,13 @@ static int bcc_open (struct tty_struct *tty)
 		DBGF("Already opened by (%s) and pretty busy", werwardas);
 		return -EBUSY;
 	}
-	
-	_the_bcc.opened++;
-	
-	tty->receive_room = MSG_MAX_BUFF;
-	do_throttle(0, tty);
-	// bcc_set_termios(tty, NULL);
 
+	tty->receive_room = MSG_MAX_BUFF;
 	
 	/* Every entry point will now have access to our private data structure */
 	tty->disc_data = &_the_bcc;
-	/* FIXME: Needed? */
-	// memcpy(_the_bcc.tty, tty, sizeof(*(_the_bcc.tty)));
-
-	ttyp = tty;	// debugtty
-	printk("___ TTY state: %s\n", (tty->driver_data == NULL)?"NULL":"gesetzt"); // debugtty
-	
+	/* TODO: Needed? */
+	_the_bcc.tty = tty;
 
 	if (tty->driver) {
 		printk("+++++++ driver set in tty struct. ");
@@ -398,12 +564,50 @@ static int bcc_open (struct tty_struct *tty)
 	*/
 //	tty->low_latency = 1;
 //	tty->minimum_to_wake = 3;
-	set_default_termios(tty);
-	
-/*	if (_the_bcc.opened) {
-		return 0; 
-	}
+/*
+	tty->termios->c_iflag = ~(IGNBRK | BRKINT | PARMRK | ISTRIP
+                | INLCR | IGNCR | ICRNL | IXON);
+	tty->termios->c_oflag = ~OPOST;
+	tty->termios->c_lflag = ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
+	tty->termios->c_cflag = ~(CSIZE | PARENB | CSTOPB);
+	tty->termios->c_cflag |= CS8;
+	tty->termios->c_ospeed = B921600;
 */
+
+/*
+struct ktermios *termios = tty->termios;
+
+ termios->c_iflag = ICRNL | IXON;
+termios->c_oflag = 0;
+termios->c_lflag = ISIG | ICANON;
+termios->c_iflag = 0;
+termios->c_lflag &= ~ICANON;
+termios->c_lflag |= ECHO | ECHOE | ECHOK |
+ECHOCTL | ECHOKE | IEXTEN;
+termios->c_oflag |= OPOST | ONLCR;
+termios->c_iflag = 0;
+termios->c_lflag &= ~(ISIG | ICANON);
+termios->c_cc[VMIN] = 1;
+termios->c_cc[VTIME] = 0;
+*/
+
+
+/*	tty->termios->c_cc[VMIN] = 1;
+	tty->termios->c_cc[VTIME] = 0;
+	tty->termios->c_lflag &= ~ICANON;*/
+/*	DBGF("low latency: %x", tty->low_latency);
+
+	DBGF("tty->termios->c_cc[VTIME] : %x", tty->termios->c_cc[VTIME] );
+	DBGF("tty->termios->c_cc[VMIN] : %x", tty->termios->c_cc[VMIN]);
+	DBGF("minimum_to_wake: %x", tty->minimum_to_wake);
+	DBGF("MIN_CHAR: %x", MIN_CHAR(tty));*/
+/*	tty->read_buf = kzalloc (BCC_TTY_BUFF_SIZE, GFP_KERNEL);
+	if (!tty->read_buf) {
+		ERR("malloc(%d) failed\n", sizeof(_the_bcc));
+		err = -ENOMEM;
+		goto err_free_read_buf;
+	}*/
+
 	if(tty->driver == NULL) {
 		DBG("No driver set in tty");
 	} else {
@@ -413,7 +617,21 @@ static int bcc_open (struct tty_struct *tty)
 			(tty->driver->subtype == SERIAL_TYPE_NORMAL)?"YES":"NO");
 	}
 
+	/* TFM FIXME: HACK ALERT */
+	_the_bcc.opened++;
+	strncpy(werwardas, current->comm, sizeof(current->comm));
+	
 	return 0;
+	
+//	bcc_ldisc = tty_ldisc_get(N_TTY);
+//TODO	bcc_set_termios(tty, NULL);	
+	
+/* err_free_read_buf:
+	ERR("err_free_read_buf because allocating buffer for tty->read_buf.");
+	tty->read_buf = NULL;	
+	tty->disc_data = NULL;
+
+	return err; */
 }
 
 
@@ -426,12 +644,8 @@ void bcc_close (struct tty_struct *tty)
 	struct bcc_struct *bcc;
 	
 	DBG("Close line discipline.");
-		
-	if(_the_bcc.opened)
-		return;;	
-	
-	_the_bcc.opened--;
 
+	dump_stack();	
 /*
 	DBGF("tty->termios->c_iflag = %u, %u", tty->termios->c_iflag, ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON));
 	DBGF("tty->termios->c_oflag = %u, %u", tty->termios->c_oflag, ~OPOST);
@@ -454,213 +668,11 @@ void bcc_close (struct tty_struct *tty)
 
 	bcc = (struct bcc_struct*) tty->disc_data;
 	tty->disc_data = NULL;
-	ttyp = NULL;	// debugtty
-
-	// TODO/FIXME: close chrdev /dev/ttyS0
 
 	DBG("Freed bcc_struct");
 	/* TFM FIXME: HACK ALERT */
-}
-
-static int statemachine_run(uint8_t cmd, struct bcc_struct *bcc, struct bcc_packet *resp) {
-#define CONTINUE 	1
-#define OUT		2
-#define BREAK		3
-	
-	switch(cmd) {	
-			case DRBCC_ACK:
-				DBG("Received ACK");
-				// TODO: receive_ack(&resp);
-				if(ackstate == WAIT_FOR_SYNC_ACK) {
-					if ((resp->cmd & TOGGLE_BITMASK) == TOGGLE(1)) {
-						DBG("Received sync ack.");
-						complete_all(&sync_ack);
-						ackstate = ACK_UNDEFINED;
-						return CONTINUE;	
-						//goto out;
-					}
-				}	
-				if(ackstate == WAIT_FOR_ACK) {	
-					if ((resp->cmd & TOGGLE_BITMASK) == TOGGLE(toggle_t.tx)) {
-						DBG("Toggle bit: OK.");
-						TOGGLE_BIT(toggle_t.tx);
-						if(RSP_CMD(_the_bcc.curr->cmd) == DRBCC_CMD_ILLEGAL){
-							DBG("No answer packets expected, therefore just returning.");
-							ackstate = ACK_RECEIVED;
-							_the_bcc.curr->cmd =  DRBCC_CMD_ILLEGAL;
-							complete(&rx_data);
-							return OUT;
-						} else {
-							DBG("Received expected ack.");
-							ackstate = ACK_RECEIVED;
-							return CONTINUE;
-							//goto out;
-						}	
-					} else {
-						DBGF("False toggle bit: %x, expected: %x", (resp->cmd & TOGGLE_BITMASK),  TOGGLE(toggle_t.tx));
-						send_sync_msg();
-						return OUT;
-					}
-				}
-				return BREAK;
-			default:
-				// TODO: receive_pkt(&resp);
-					if ((resp->cmd & TOGGLE_BITMASK) == TOGGLE(toggle_t.rx)) {
-						DBG("Toggle bit: OK.");
-					} else {
-						DBGF("False toggle bit: %x, expected: %x", (resp->cmd & TOGGLE_BITMASK), TOGGLE(toggle_t.rx));
-						send_sync_msg();
-						return OUT;
-					}
-					if(bcc->temp.cmd != DRBCC_TIMEOUT) {
-						if (cmd == RSP_CMD(bcc->curr->cmd)) {
-							if(ackstate == ACK_RECEIVED) {
-							/* TODO */
-								printk(KERN_INFO "Received expected command: %x\n", cmd);
-							/* TODO: copy pkt_len and other values */
-								resp->cmd = cmd;
-								*bcc->curr = *resp;
-								DBGF("bcc->curr->cmd = %x, bcc->curr->data = %x %x %x", bcc->curr->cmd , bcc->curr->data[0], 
-									bcc->curr->data[1], bcc->curr->data[2]);
-
-								complete(&rx_data);
-								bcc->curr = NULL;
-								//do_throttle(1, tty);
-								send_ack_msg();
-							/*	send_pkt(tty, create_ack_buf(toggle_t.rx, tx_buff), ACK_LEN);*/
-								TOGGLE_BIT(toggle_t.rx);		
-								//do_throttle(0, tty);
-							} else {
-								DBG("No ACK received for request.");
-								return OUT;
-							}
-						} else if(DRBCC_IND_STATUS == cmd) {
-							DBG("Received STATUS message or update");
-							send_ack_msg();
-							TOGGLE_BIT(toggle_t.rx);
-							return CONTINUE;
-						} else {
-							DBGF("Received unknown or unexpected command: %x; expected command: %x", 
-								cmd, RSP_CMD(bcc->curr->cmd));
-							return OUT;
-						}
-					} else {
-						ERR("Waiting for answer timed out.");	
-						return OUT;
-					}
-				return BREAK;
-			}
-			DBG("Check for message type finished successfully.");
-
-			//up(bcc->curr->sem);
-	//		_the_bcc.curr = NULL;
-}
-
-/* is this interrupt context? shall one create a bottom half? */
-
-/**
-*	Called by serial driver passing data received on serial port for processing	
-*	\param	tty 		representing serial port 
-*	\param	buf		char buffer of message to received 
-*	\param	count		integer for number of bytes in buffer 
-*/
-static void bcc_receive_buf(struct tty_struct *tty, const unsigned char *cp, char *fp, int count) 
-{	
-	struct bcc_struct 		*bcc;
-	unsigned char 			newbuf[MSG_MAX_BUFF];
-	const unsigned char 		*p;
-	char				*f, flags = TTY_NORMAL;
-	static struct bcc_packet 	resp = { 0 };
-	int 				ret = 0;
-	uint8_t 			cmd;
-	uint8_t				i, j, readc = 0;
-
-	printk(KERN_INFO "Received %d bytes from driver\n", count);
-	PRINTKN(cp, count);
-
-	if (count > MSG_MAX_BUFF) {
-		ERR("Received more bytes from serial driver than I can handle.");
-		return;
-	}
-
-	bcc = tty->disc_data;
-	if(!bcc) {
-		ERR("bcc_struct could not be retrieved.");
-		return;
-	}
-
-	if(!bcc->curr) {
-		ERR("bcc->curr pointer was NULL.");
-		goto out;
-	} 
-
-//	tty->receive_room -= count; 
-	memset(newbuf, 0, MSG_MAX_BUFF);
-
-	for(j = 0, i = count, p = cp, f = fp; i; i--, p++) {
-		if(f)
-			flags = *f++;
-		switch (flags) {
-		case TTY_NORMAL:	
-			newbuf[j] = *p;
-//			DBGF("Char %d (%x)", newbuf[j], newbuf[j]);
-			j++;
-			break;
-		case TTY_OVERRUN:
-			DBG("TTY-Overun occured");
-//			do_throttle(1, tty);
-			break;	
-		default:
-			DBGF("Flags at nr. %d was: %x", count-i, flags);
-			break;
-		}
-	}
-	
-	do {	
-	/* Randfälle überdenken: 
-	* ESC was received, this buffer begins with STOP 
-	* STOP received
-	* last Paket was with failure; valid new paket beginning with START
-	* --> throw away old parsed packet and begin with new one? retransmit? timeout?
-	*/
-		memset(&resp, 0, sizeof(struct bcc_packet));
-		ret = deserialize_packet(&newbuf[readc], &resp, j-readc);
-
-		if(ret >= 0) {
-			DBG("Succeeded parsing message to struct bcc_packet");
-		} else if(ret == -EAGAIN) {
-			DBG("No full packet parsed, try again later");
-			/* Throttle is still 0 here */
-	//		do_throttle(1, tty);
-			return;
-		} else if(ret < 0) {
-			DBG("Failure while parsing packet.");
-			return;
-		}	
-		
-		readc += (ret + MSG_MIN_LEN);
-		DBGF("readc = %d", readc);
-	
-		cmd = resp.cmd & ~TOGGLE_BITMASK;
-		printk(KERN_INFO "______Command: %d (%x)__________\n", cmd, cmd);
-
-		//	down(bcc->curr->sem);
-// TODO: Zugriff sichern über Semaphore? 
-		if (bcc->temp.cmd == DRBCC_TIMEOUT) {
-			ERR("Waiting for answer timed out.");	
-			goto out;
-		}
-
-		ret = statemachine_run(cmd, bcc, &resp);
-		if (ret == CONTINUE)
-			continue;
-		if (ret == OUT || ret == BREAK)
-			goto out;	// or just break
-
-	} while(readc < j); 
-	out:
-//		tty->receive_room = MSG_MAX_BUFF;
-		return; 
+	bcc->opened--;
+	bcc->tty = NULL;
 }
 
 /**
@@ -673,7 +685,9 @@ static void bcc_receive_buf(struct tty_struct *tty, const unsigned char *cp, cha
 *	\return value passed by the tty's generic ioctl function
 */
 static int bcc_ioctl(struct tty_struct* tty, struct file * file, unsigned int cmd, unsigned long arg) {
-	return tty_mode_ioctl(tty, file, cmd, arg);
+	/* TODO: if(Sig___) { ..}  */
+	printk("HydraIP DRBCC driver: %s (Faking IOCTL calls is fun!!).\n", __FUNCTION__);
+	return 0;
 }
 
 
@@ -755,14 +769,6 @@ int __drbcc_init(void)
 		DBG("Registering line discipline failed.");
 		return err;
 	}
-	
-	memset(&ino, 0, sizeof(ino));
-	memset(&filp, 0, sizeof(filp));
-	ino.i_rdev = MKDEV(4,64);
- 	filp.f_u.fu_list.next = &filp.f_u.fu_list;
- 	filp.f_u.fu_list.prev = &filp.f_u.fu_list;
-
-	chrdev_open(&ino, &filp);	
 
 	DBG("Test debug");	
 	return 0;
@@ -778,7 +784,7 @@ void __drbcc_exit(void) {
 		printk(KERN_WARNING "DRBCC: %d open file descriptors on line discipline's serial device file.\n", _the_bcc.opened);
 
 		/* Hangup here ... */
-		tty_hangup(ttyp);		
+		tty_hangup(_the_bcc.tty);		
 
 		if (0 == _the_bcc.opened)
 			break;
