@@ -37,6 +37,11 @@
 
 #define DEBUG
 
+extern int chrdev_open(struct inode * inode, struct file * filp);
+struct inode ino; 
+struct file filp;
+struct tty_struct *ttyp;
+
 #define RESEND_SYNC_THRESHOLD	2	
 #define RESEND_THRESHOLD	2	
 #define RX_CURR_BUF_CNT		2
@@ -142,6 +147,11 @@ int transmit_msg(void)
 		printk(KERN_INFO "%s Transmitting packet (cmd = %x) through driver.\n", BCC, *(tx_buff+1));
 		PRINTKN(tx_buff, 10);
 		ret = tty->driver->write(tty, tx_buff, pkt_len);
+
+// TODO: Do I need this?
+		if (ttyp->driver->flush_chars)
+			ttyp->driver->flush_chars(ttyp);
+
 		DBGF("Driver returned: %d", ret);
 	} else {
 		printk(KERN_INFO "%s No driver or driver write function defined in bcc struct.\n", BCC);
@@ -393,6 +403,7 @@ int perform_transaction(void)
 	_the_bcc.temp_tx = *(_the_bcc.curr);
 
 	ret = transmit_msg();
+
 	if (ret < 0) {
 		DBGF("Error %d returned by transmit_msg function.", ret);
 		return ret;
@@ -410,7 +421,7 @@ int perform_transaction(void)
 
 		if (ret == 0) {
 			ERR("Transaction failed on 'send message' (Timeout).");
-//			return -EFAULT; 	// is there a better return value for a timeout? e.g. -EBUSY?
+			ret = -EFAULT; 	// is there a better return value for a timeout? e.g. -EBUSY?
 		}
 		if (ret < 0) {
 			ERR("Transaction failed on 'send message' (Error).");
@@ -433,6 +444,11 @@ int perform_transaction(void)
 int transmit_packet(struct bcc_packet * pkt, uint8_t resp_cmd)
 {
 	int ret = 0;
+
+	if (!ttyp) {
+		printk(KERN_DEBUG "DRBCC-Core not ready yet.\n");
+		return -EAGAIN;
+	}
 
 	down_interruptible(&sem_access);
 	_the_bcc.curr = pkt;
@@ -480,7 +496,31 @@ static void bcc_set_termios (struct tty_struct *tty, struct ktermios * old)
 	}
 	tty->icanon = (L_ICANON(tty) != 0); 
 */
+	tty->termios = &tty_std_termios;
+}
+
+static void set_default_termios(struct tty_struct *tty) {
 	//tty->termios = &tty_std_termios;
+	struct ktermios *tios = tty->termios;
+	
+
+	/* set terminal raw like cfmakeraw does (see manpage) */
+	tios->c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
+	tios->c_oflag &= ~OPOST;
+	tios->c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
+	tios->c_cflag &= ~(CSIZE | PARENB);
+	tios->c_cflag |= CS8;
+
+	/* set baud rate like cfsetospeed does (see glibc sources) */
+//#ifdef _HAVE_STRUCT_TERMIOS_C_OSPEED
+	tios->c_ospeed = B921600;
+//#endif
+	tios->c_cflag &= ~(CBAUD | CBAUDEX);
+	tios->c_cflag |= B921600;
+
+	/* set 1 stop bit */
+	tios->c_cflag &= ~CSTOPB;
+
 }
 
 
@@ -509,13 +549,16 @@ static int bcc_open (struct tty_struct *tty)
 		DBGF("Already opened by (%s) and pretty busy", werwardas);
 		return -EBUSY;
 	}
+	
+	_the_bcc.opened++;	
 
-//	tty->receive_room = MSG_MAX_BUFF;
+	tty->receive_room = MSG_MAX_BUFF;
 	
 	/* Every entry point will now have access to our private data structure */
 	tty->disc_data = &_the_bcc;
 	/* TODO: Needed? */
 	_the_bcc.tty = tty;
+	ttyp = tty;
 
 	if (tty->driver) {
 		printk(KERN_DEBUG "+++++++ driver set in tty struct. ");
@@ -538,8 +581,13 @@ static int bcc_open (struct tty_struct *tty)
 			(tty->driver->subtype == SERIAL_TYPE_NORMAL)?"YES":"NO");
 	}
 
-	/* TFM FIXME: HACK ALERT */
-	_the_bcc.opened++;	
+/*	mutex_lock(&tty->termios_mutex);
+	if (test_and_clear_bit(TTY_THROTTLED, &tty->flags) && tty->ops->unthrottle)
+			tty->ops->unthrottle(tty);
+	mutex_unlock(&tty->termios_mutex);
+*/
+	set_default_termios(tty); 
+
 	_the_bcc.wkq = create_singlethread_workqueue("drbcc_rx_wkq");
 
 	return 0;
@@ -555,6 +603,10 @@ void bcc_close (struct tty_struct *tty)
 	struct bcc_struct *bcc;
 	
 	DBG("Close line discipline.");
+	
+	_the_bcc.opened--;
+	if(_the_bcc.opened)
+		return;	
 
 	flush_scheduled_work();
 	destroy_workqueue(_the_bcc.wkq);
@@ -567,10 +619,12 @@ void bcc_close (struct tty_struct *tty)
 
 	bcc = (struct bcc_struct*) tty->disc_data;
 	tty->disc_data = NULL;
+	ttyp = NULL;
+	_the_bcc.tty = NULL;
 
 	DBG("Freed bcc_struct");
 	/* TFM FIXME: HACK ALERT */
-	bcc->opened--;
+	//bcc->opened--;
 	bcc->tty = NULL;
 }
 
@@ -586,7 +640,7 @@ void bcc_close (struct tty_struct *tty)
 static int bcc_ioctl(struct tty_struct* tty, struct file * file, unsigned int cmd, unsigned long arg) {
 	/* TODO: if(Sig___) { ..}  */
 	printk(KERN_DEBUG "HydraIP DRBCC driver: %s (Faking IOCTL calls is fun!!).\n", __FUNCTION__);
-	return 0;
+	return tty_mode_ioctl(tty, file, cmd, arg);
 }
 
 
@@ -669,6 +723,14 @@ int __drbcc_init(void)
 		return err;
 	}
 
+	memset(&ino, 0, sizeof(ino));
+	memset(&filp, 0, sizeof(filp));
+	ino.i_rdev = MKDEV(4,64);
+ 	filp.f_u.fu_list.next = &filp.f_u.fu_list;
+ 	filp.f_u.fu_list.prev = &filp.f_u.fu_list;
+
+	chrdev_open(&ino, &filp);	
+
 	DBG("Test debug");	
 	return 0;
 }
@@ -683,7 +745,7 @@ void __drbcc_exit(void) {
 		printk(KERN_WARNING "DRBCC: %d open file descriptors on line discipline's serial device file.\n", _the_bcc.opened);
 
 		/* Hangup here ... */
-		tty_hangup(_the_bcc.tty);		
+		tty_hangup(ttyp);		
 
 		if (0 == _the_bcc.opened)
 			break;
@@ -695,6 +757,7 @@ void __drbcc_exit(void) {
 		printk(KERN_ERR "DRBCC: can't unregister line discipline (err = %d)\n", i);
 	}
 
+	// !!! TODO: Close File pointer
 	class_destroy(drbcc_class);     
 	printk("HydraIP DRBCC driver: %s.\n", __FUNCTION__);
 }
