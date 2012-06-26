@@ -185,9 +185,9 @@ ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t si
 		return 0;
 	}
 
-	if(((pkt.cmd & ~TOGGLE_BITMASK) != DRBCC_SYNC) && (pkt.cmd & TOGGLE_BITMASK) != TOGGLE(toggle_t.tx)) {
+	if(((pkt.cmd & ~TOGGLE_BITMASK) != DRBCC_SYNC) && (pkt.cmd & TOGGLE_BITMASK) != TOGGLE_SHIFT(toggle_t.tx)) {
 		ERR("Packet with wrong toggle bit received, putting fake ACK into fifo.");
-		if (kfifo_put(fifo, create_ack_buf(TOGGLE(toggle_t.tx), buf), ACK_LEN) < ACK_LEN) {
+		if (kfifo_put(fifo, create_ack_buf(TOGGLE_SHIFT(toggle_t.tx), buf), ACK_LEN) < ACK_LEN) {
 			ERR("Putting ACK to fifo failed.");
 			ret = -EFAULT;
 		}
@@ -229,7 +229,7 @@ ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t si
 	TOGGLE_BIT(toggle_t.tx);
 
 	if(pkt.cmd != DRBCC_CMD_ILLEGAL) {
-		pkt.cmd |= TOGGLE(toggle_t.rx);
+		pkt.cmd |= TOGGLE_SHIFT(toggle_t.rx);
 		ret = serialize_packet(&pkt, buf);
 		if (kfifo_put(fifo, buf, ret) < ret) {
 			ERR("Putting data to fifo failed.");

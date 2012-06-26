@@ -114,7 +114,7 @@ start:
 	for(i = 0; i < size && pkt->curr_idx-1 < MSG_MAX_LEN-2 && *cp != DRBCC_STOP_CHAR &&  *cp != DRBCC_START_CHAR; pkt->curr_idx++, i++) {
 /* FIXME: Komischer code hier, muss ganz andersch gehn mit dem de-escapen */
 		cp = bcc_unesc_byte(cp, &pkt->data[pkt->curr_idx-1]);
-	//	DBGF("Nr. %d: %x", pkt->curr_idx-1, pkt->data[pkt->curr_idx-1]);
+		DBGF("Nr. %d: %x", pkt->curr_idx-1, pkt->data[pkt->curr_idx-1]);
 	}
 
 	if(*cp == DRBCC_START_CHAR) {
@@ -162,7 +162,7 @@ unsigned char *create_ack_buf(uint8_t toggle, unsigned char *tx_buff)
 {
 	int ret;
 	struct bcc_packet pkt = {
-		.cmd = (DRBCC_ACK | (TOGGLE(toggle) & TOGGLE_BITMASK)),
+		.cmd = (DRBCC_ACK | (TOGGLE_SHIFT(toggle) & TOGGLE_BITMASK)),
 	};
 	
 	DBGF("Toggle bit of ACK message: %d.", toggle);
@@ -185,7 +185,7 @@ EXPORT_SYMBOL(create_ack_buf);
 unsigned char *create_sync_buf(unsigned char *tx_buff)
 {
 	int ret;
-	struct bcc_packet pkt = { DRBCC_SYNC | TOGGLE(1) };
+	struct bcc_packet pkt = { DRBCC_SYNC | TOGGLE_SHIFT(1) };
 
 	DBG("Create synchronisation message in buffer.");
 
