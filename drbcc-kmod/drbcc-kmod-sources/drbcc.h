@@ -16,7 +16,6 @@
 #include <linux/types.h>
 #include <linux/cdev.h>
 #include <asm/semaphore.h>
-#include <linux/workqueue.h>
 #endif /* __KERNEL__ */
 
 #include "debug.h"
@@ -33,11 +32,8 @@
 #define BCC_TTY_FLIPBUF_SIZE	TTY_FLIPBUF_SIZE
 #define BCC_PKT_MIN_SIZE	5 	/* <DRBCC_START_CHAR> <DRBCC_CMD> [<DATA:1> .. <DATA:n>] <CRC_LO> <CRC_HI> <DRBCC_STOP_CHAR> */
 
-#define TOGGLEB(x) (x->cmd = (x->cmd & ~TOGGLE_BITMASK))
-#define TOGGLE_SHIFT(toggle) (toggle << 7)
-#define TOGGLE TOGGLE_SHIFT(toggle)
+#define TOGGLE(toggle) (toggle << 7)
 #define TOGGLE_BIT(toggle) (toggle += 1)
-#define T(x)	(x & ~TOGGLE_SHIFT(1))
 
 /**
 *  \struct	toggle
@@ -126,8 +122,7 @@ struct bcc_packet {
 	uint8_t curr_idx;					/**< current position pointer in the process of parsing  */
 	uint16_t crc; /* TODO: default should be 0*/
 
-	struct semaphore 	*sem;
-	struct work_struct	work;
+	struct semaphore *sem;
 };
 
 int serialize_packet(struct bcc_packet * pkt, unsigned char tx_buff[MSG_MAX_BUFF]);
