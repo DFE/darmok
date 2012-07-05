@@ -35,7 +35,7 @@
 #define BCC_MAGIC			22
 #define BCC_TTY_MAJOR			123
 
-#define DEBUG
+#define DEBUG_DRBCC
 
 extern int chrdev_open(struct inode * inode, struct file * filp);
 struct inode ino; 
@@ -144,7 +144,7 @@ int transmit_msg(void)
 		
 		pkt_len = serialize_packet(pkt, tx_buff);
 	
-		printk(KERN_INFO "%s Transmitting packet (cmd = %x) through driver.\n", BCC, *(tx_buff+1));
+		DBGF("%s Transmitting packet (cmd = %x) through driver.\n", BCC, *(tx_buff+1));
 		PRINTKN(tx_buff, 10);
 		ret = tty->driver->write(tty, tx_buff, pkt_len);
 
@@ -154,7 +154,7 @@ int transmit_msg(void)
 
 		DBGF("Driver returned: %d", ret);
 	} else {
-		printk(KERN_INFO "%s No driver or driver write function defined in bcc struct.\n", BCC);
+		DBGF("%s No driver or driver write function defined in bcc struct.\n", BCC);
 		/* TODO: Failure code */
 		ret = -EFAULT;
 	}
@@ -171,7 +171,7 @@ void transmit_ack(void)
 	struct tty_struct *tty = _the_bcc.tty;
 	
 	if (tty->driver && tty->driver->write) {
-		printk(KERN_INFO "%s Transmitting ack through driver.\n", BCC);
+		DBGF("%s Transmitting ack through driver.\n", BCC);
 
 		if(toggle_t.rx) {
 			ret = tty->driver->write(tty, ACK_BUF_RX_0, 5);
@@ -313,7 +313,7 @@ static void bcc_receive_buf(struct tty_struct *tty, const unsigned char *cp, cha
 	const unsigned char 		*p;
 	char				*f, flags = TTY_NORMAL;
 
-	printk(KERN_INFO "Received %d bytes from driver\n", count);
+	DBGF("Received %d bytes from driver\n", count);
 	PRINTKN(cp, count);
 
 	if (count > MSG_MAX_BUFF) {
@@ -538,15 +538,14 @@ static void set_default_termios(struct tty_struct *tty) {
 static int bcc_open (struct tty_struct *tty)
 {
 /* FIXME:	struct bcc_struct *bcc; */
-	//int err;
-	static char werwardas[TASK_COMM_LEN] = {"gar keiner"};
 	DBG("Try to open line discipline.");
 
 	if(!tty)
 		return -EINVAL;
 	
 	if (_the_bcc.opened) {
-		DBGF("Already opened by (%s) and pretty busy", werwardas);
+		// TODO: Wait...this was secured by a semaphore, wasn't it?
+		// tty->count--;
 		return -EBUSY;
 	}
 	
@@ -716,7 +715,7 @@ int __drbcc_init(void)
 	
 	drbcc_class = class_create( THIS_MODULE, "drbcc");
 
-	printk(KERN_INFO "Load ldisc.\n");
+	DBGF("Load ldisc.\n");
 
 	if ((err = tty_register_ldisc(N_BCC, &bcc_ldisc))) {
 		DBG("Registering line discipline failed.");
@@ -746,6 +745,7 @@ void __drbcc_exit(void) {
 
 		/* Hangup here ... */
 		tty_hangup(ttyp);		
+		ttyp->count--;
 
 		if (0 == _the_bcc.opened)
 			break;

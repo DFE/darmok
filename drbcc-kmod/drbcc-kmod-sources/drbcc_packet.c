@@ -123,7 +123,7 @@ start:
 
 	if (*cp == DRBCC_STOP_CHAR) {
 		pkt->payloadlen = pkt->curr_idx-3;
-		printk(KERN_INFO "%s Reached stop character. Struct filled (Payloadlen: %d).\n", BCC, pkt->payloadlen);
+		DBGF("%s Reached stop character. Struct filled (Payloadlen: %d).\n", BCC, pkt->payloadlen);
 		
 		crc = 0xffff;
 		crc = libdrbcc_crc_ccitt_update(crc, pkt->cmd);
@@ -135,7 +135,7 @@ start:
 
 		if (crc == pkt->crc) {
 			pkt->data[pkt->payloadlen] = pkt->data[pkt->payloadlen+1] = 0;
-			printk(KERN_INFO "%s CRC of packet was right.\n", BCC);
+			DBGF("%s CRC of packet was right.\n", BCC);
 			return pkt->payloadlen;
 		} else {
 			ERR("Received packet with wrong CRC\n");
@@ -143,8 +143,8 @@ start:
 			return -EFAULT;
 		}
 	} else {
-		printk(KERN_INFO "%s No stop character found at the end of the buffer. Trying again next time\n.", BCC);
-		PRINTKN(p, size);
+		DBGF("%s No stop character found at the end of the buffer. Trying again next time\n.", BCC);
+		PRINTKN(cp, size);
 		return -EAGAIN;
 	}
 }
