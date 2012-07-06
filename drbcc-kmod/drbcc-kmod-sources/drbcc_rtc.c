@@ -53,7 +53,7 @@ int get_rtc_time(struct device *dev, struct rtc_time *rtc_tm)
 		.payloadlen	= 0,
 		.sem		= &sem,
 	};
-	DBG("Request time from mircocontroller.");	
+	DBG("Request time from microcontroller.");	
 		
 /* TODO: remove second parameter in transmit_packet function */
 	if ((ret = transmit_packet(&pkt, RSP_CMD(pkt.cmd))) < 0) {
