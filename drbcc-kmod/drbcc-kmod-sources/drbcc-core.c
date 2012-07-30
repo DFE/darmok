@@ -28,6 +28,7 @@
 
 /* Timeout in jiffies; here: ?00ms */
 #define BCC_PKT_TIMEOUT			HZ/2
+
 #include "drbcc.h"
 
 /* A homepage said N_MOUSE might be unused by most systems */
@@ -36,6 +37,7 @@
 #define BCC_TTY_MAJOR			123
 
 #define DEBUG_DRBCC
+#define DEBUG
 
 extern int chrdev_open(struct inode * inode, struct file * filp);
 struct inode ino; 
@@ -66,6 +68,8 @@ struct bcc_struct {
 	struct bcc_packet 	temp_tx;		
 	
 	struct workqueue_struct	*wkq;
+
+	void (*async_callback) (struct bcc_packet *);
 };
 
 struct class *drbcc_class;
@@ -74,6 +78,7 @@ static struct bcc_struct _the_bcc = {
 	.opened = 0,
 	.initial = 1,
 
+	.async_callback = NULL,
 	/* How shall this be initialised? */
 /* TODO	.access.count = 1,
 	.response.count = 0, */
@@ -206,18 +211,6 @@ void rx_worker_thread(struct work_struct *work)
 		printk(KERN_WARNING "Pkt pointer was null, something went terribly wrong.\n");
 	}
 
-/* Asynchronous messages */ 
-	for(i = 0; i < sizeof(async_cmd)/sizeof(char); i++) {
-		if (pkt->cmd == async_cmd[i]) {
-			/* TODO: pass to /proc/something or similar, or log
-				in case nobody has registered for async messages */
-			/* TODO: don't forget to kfree memory !!!! */
-			toggle_bit_save_rx(pkt);
-			transmit_ack();
-			return;
-		}
-	}
-
 	if (l2_state == RQ_STD && T(pkt->cmd) == DRBCC_ACK) {
 		printk(KERN_DEBUG "*** l2_state = RQ_STD\n");
 		TOGGLEB(pkt);
@@ -243,6 +236,7 @@ void rx_worker_thread(struct work_struct *work)
 		printk(KERN_DEBUG "*** l2_state = RQ_WAIT_ANS\n");
 		transmit_ack();
 		if (toggle_bit_save_rx(pkt) < 0) {
+			transmit_ack();
 			goto freeptr;
 		} 
 		TOGGLEB(pkt);
@@ -253,6 +247,21 @@ void rx_worker_thread(struct work_struct *work)
 		return;
 	}
 
+/* Asynchronous messages */ 
+	if ((toggle_bit_save_rx(pkt) < 0) || (_the_bcc.async_callback == NULL)) { 
+		goto freeptr;
+	} else {
+		for(i = 0; i < sizeof(async_cmd)/sizeof(char); i++) {
+			if (pkt->cmd == async_cmd[i]) {
+				/* TODO: pass to /proc/something or similar, or log
+					in case nobody has registered for async messages */
+				_the_bcc.async_callback(pkt);
+				transmit_ack();
+				DBGF("Received async msg: %d (0x%x)", pkt->cmd, pkt->cmd);
+				return;		// Callback Funktion kfree's memory
+			}
+		}
+	}
 	printk(KERN_DEBUG "State = %d, cmd = %x", l2_state, pkt->cmd);
 	transmit_ack();
 	
@@ -270,7 +279,6 @@ void receive_msg(unsigned char *buf, uint8_t len)
 	struct bcc_packet	*pkt = NULL;
 
 	do {
-// TODO: free pkt
 		pkt = (struct bcc_packet *) kmalloc(sizeof(struct bcc_packet), GFP_KERNEL);
 		memset(pkt, 0, sizeof(struct bcc_packet));
 		
@@ -290,6 +298,7 @@ void receive_msg(unsigned char *buf, uint8_t len)
 	
 		INIT_WORK(&pkt->work, rx_worker_thread);
 		queue_work(_the_bcc.wkq, &pkt->work);
+		printk(KERN_DEBUG "______Command before Schedule: %d (%x)__________\n", pkt->cmd, pkt->cmd);
 		schedule();
 	
 		readc += (ret + MSG_MIN_LEN);
@@ -468,7 +477,7 @@ int transmit_packet(struct bcc_packet * pkt, uint8_t resp_cmd)
 	}
 	
 	/* TODO: implement this? */
-	if (_the_bcc.resp->cmd != resp_cmd) {
+	if ((_the_bcc.resp->cmd != resp_cmd) && (resp_cmd != DRBCC_CMD_ILLEGAL)) {
 		printk(KERN_WARNING "Received packet with wrong response command: %d\n", _the_bcc.resp->cmd);
 		ret = -EFAULT; 	/* TODO: is there a better err value for this? */
 		goto exit;
@@ -486,6 +495,13 @@ exit:
 	return ret;
 }
 EXPORT_SYMBOL(transmit_packet);
+
+/* TODO:
+int register_async_callback(void *func_ptr)
+{
+}
+EXPORT_SYMBOL(register_async_callback);
+*/
 
 static void bcc_set_termios (struct tty_struct *tty, struct ktermios * old) 
 {

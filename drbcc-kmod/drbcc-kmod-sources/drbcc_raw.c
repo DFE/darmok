@@ -24,6 +24,7 @@
 #define READ_BUF	4096
 
 static struct cdev cdev;
+static struct kfifo *fifo;
 
 static struct toggle toggle_t = {
 	.rx = 0,
@@ -37,8 +38,6 @@ static struct toggle toggle_t = {
 *	\return 0 on success, -EAGAIN if allocating memory for fifo buffer failed 	
 */
 int drbcc_raw_open(struct inode * ino, struct file * file) {	
-	struct kfifo *fifo;
-
 	DEFINE_SPINLOCK(spin);
 	DBG("Open through drbcc_raw_open, init new kfifo.");
 	fifo = kfifo_alloc(READ_BUF, GFP_KERNEL, &spin);
@@ -47,7 +46,6 @@ int drbcc_raw_open(struct inode * ino, struct file * file) {
 		return -EAGAIN;
 	}
 	memset(fifo->buffer, 0,  kfifo_len(fifo));
-	file->private_data = fifo;
 	
 	return 0;
 }
@@ -60,11 +58,9 @@ int drbcc_raw_open(struct inode * ino, struct file * file) {
 */
 int drbcc_raw_close(struct inode * inode, struct file * file)
 {
-	struct kfifo *fifo;
 	DBG("Closing operation for device called.");
-	fifo = (struct kfifo*)file->private_data;
 	if(!fifo) {
-		DBG("Fifo buffer could not be retrieved.");
+		DBG("Fifo buffer was never initialized.");
 	}
 	kfifo_free(fifo);
 
@@ -84,9 +80,7 @@ ssize_t drbcc_raw_read(struct file * file, char __user * user, size_t num1, loff
 	size_t count = 0;
 	unsigned int fifo_len;
 	unsigned char local_buf[READ_BUF];
-	struct kfifo *fifo;
 
-	fifo = (struct kfifo*)file->private_data;
 	if(!fifo) {
 		DBG("Fifo buffer could not be retrieved.");
 	}
@@ -136,14 +130,7 @@ ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t si
 	struct bcc_packet pkt = { 0 };
 	int ret = 0;
 	unsigned char buf[MSG_MAX_BUFF];
-	struct kfifo *fifo;
  	
-	DECLARE_MUTEX(sem);
-	pkt.sem	= &sem;
-
-	DBGF("Userspace wants to write %d Bytes", size);
-
-	fifo = (struct kfifo*)file->private_data;
 	if(!fifo) {
 		DBG("Fifo buffer could not be retrieved.");
 	}
@@ -244,11 +231,28 @@ ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t si
 	return size;
 }
 
+/* Note: Callback Method for asynchronous messages should kfree
+* retrieved memory
+*/
+void drbcc_rcv_msg_async(struct bcc_packet *pkt)
+{
+	unsigned char buf[MSG_MAX_BUFF];
+	int ret;
+ 	
+	pkt->cmd |= TOGGLE_SHIFT(toggle_t.rx);
+	ret = serialize_packet(pkt, buf);
+	if (kfifo_put(fifo, buf, ret) < ret) {
+		ERR("Putting data to fifo failed.");
+	}
+	DBGF("Put asynchronous packet with cmd = %x into fifo. fifolen = %d", pkt->cmd, kfifo_len(fifo));
 
+	kfree(pkt);
+}
 
-int drbcc_raw_ioctl(struct inode * ino, struct file * file, unsigned int num1, unsigned long num2) {
+int drbcc_raw_ioctl(struct inode * ino, struct file * file, unsigned int cmd, unsigned long arg) {
 	/* TODO: if(Sig___) { ..}  */
 	printk("HydraIP DRBCC driver: %s.\n", __FUNCTION__);
+	DBGF("Cmd: %d, arg: %ld ", cmd, arg );
 	return 0;
 }
 
