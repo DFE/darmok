@@ -25,11 +25,32 @@
 
 static struct cdev cdev;
 static struct kfifo *fifo;
+DECLARE_MUTEX(transaction);
 
 static struct toggle toggle_t = {
 	.rx = 0,
 	.tx = 0,
 };
+
+/* Note: Callback Method for asynchronous messages should kfree
+* retrieved memory
+*/
+void drbcc_rcv_msg_async(struct bcc_packet *pkt)
+{
+	unsigned char buf[MSG_MAX_BUFF];
+	int ret;
+ 	
+	pkt->cmd |= TOGGLE_SHIFT(toggle_t.rx);
+	ret = serialize_packet(pkt, buf);
+	down_interruptible(&transaction);
+	if (kfifo_put(fifo, buf, ret) < ret) {
+		ERR("Putting data to fifo failed.");
+	}
+	up(&transaction);
+	DBGF("Put asynchronous packet with cmd = %x into fifo. fifolen = %d", pkt->cmd, kfifo_len(fifo));
+
+	kfree(pkt);
+}
 
 /**
 *	Called on open call on device file. Does the initialization work for the drbcc-raw device. 
@@ -46,6 +67,8 @@ int drbcc_raw_open(struct inode * ino, struct file * file) {
 		return -EAGAIN;
 	}
 	memset(fifo->buffer, 0,  kfifo_len(fifo));
+
+	register_async_callback(drbcc_rcv_msg_async);
 	
 	return 0;
 }
@@ -231,23 +254,6 @@ ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t si
 	return size;
 }
 
-/* Note: Callback Method for asynchronous messages should kfree
-* retrieved memory
-*/
-void drbcc_rcv_msg_async(struct bcc_packet *pkt)
-{
-	unsigned char buf[MSG_MAX_BUFF];
-	int ret;
- 	
-	pkt->cmd |= TOGGLE_SHIFT(toggle_t.rx);
-	ret = serialize_packet(pkt, buf);
-	if (kfifo_put(fifo, buf, ret) < ret) {
-		ERR("Putting data to fifo failed.");
-	}
-	DBGF("Put asynchronous packet with cmd = %x into fifo. fifolen = %d", pkt->cmd, kfifo_len(fifo));
-
-	kfree(pkt);
-}
 
 int drbcc_raw_ioctl(struct inode * ino, struct file * file, unsigned int cmd, unsigned long arg) {
 	/* TODO: if(Sig___) { ..}  */

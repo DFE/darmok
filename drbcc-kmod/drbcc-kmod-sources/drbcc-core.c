@@ -99,7 +99,7 @@ typedef enum {
 	RQ_STD, RQ_STD_ANS, RQ_WAIT_ANS, RQ_SYNC, NONE
 } GLOBAL_L2_STATES;
 
-char async_cmd[]  = { DRBCC_REQ_STATUS, DRBCC_IND_ACCEL_EVENT };
+char async_cmd[]  = { DRBCC_IND_STATUS, DRBCC_IND_ACCEL_EVENT };
 static char l2_state = NONE;
 
 /*
@@ -176,7 +176,7 @@ void transmit_ack(void)
 	struct tty_struct *tty = _the_bcc.tty;
 	
 	if (tty->driver && tty->driver->write) {
-		DBGF("%s Transmitting ack through driver.\n", BCC);
+		DBGF("%s Transmitting ack through driver (toggle-bit: %x).\n", BCC, toggle_t.rx);
 
 		if(toggle_t.rx) {
 			ret = tty->driver->write(tty, ACK_BUF_RX_0, 5);
@@ -189,11 +189,16 @@ void transmit_ack(void)
 
 int toggle_bit_save_rx(struct bcc_packet *pkt) {
 	if ((pkt->cmd & TOGGLE_BITMASK) == TOGGLE_SHIFT(toggle_t.rx)) {	
+		transmit_ack();
 		toggle_t.rx = !toggle_t.rx;
 		return 0;	
 	} else {
 		DBGF("**** Err on toggle bit (Expected: %d, received: %d (pkt->cmd = %d))!\n", 
 			TOGGLE_SHIFT(toggle_t.rx), (pkt->cmd & TOGGLE_BITMASK), pkt->cmd);
+		// FIXME: Hack Alert!!! non-atomic toggling
+		toggle_t.rx = !toggle_t.rx;
+		transmit_ack();
+		toggle_t.rx = !toggle_t.rx;
 		return -EAGAIN;
 	}
 }
@@ -234,9 +239,7 @@ void rx_worker_thread(struct work_struct *work)
 
 	if(l2_state == RQ_WAIT_ANS) {
 		printk(KERN_DEBUG "*** l2_state = RQ_WAIT_ANS\n");
-		transmit_ack();
 		if (toggle_bit_save_rx(pkt) < 0) {
-			transmit_ack();
 			goto freeptr;
 		} 
 		TOGGLEB(pkt);
@@ -248,22 +251,27 @@ void rx_worker_thread(struct work_struct *work)
 	}
 
 /* Asynchronous messages */ 
-	if ((toggle_bit_save_rx(pkt) < 0) || (_the_bcc.async_callback == NULL)) { 
+	if ((toggle_bit_save_rx(pkt) < 0) || (_the_bcc.async_callback == NULL)) {
+		if(_the_bcc.async_callback == NULL) {
+			DBG("_the_bcc.async_callback == NULL)");
+		} else {
+			DBGF("Msg with false toggle bit: %x.", toggle_t.rx); 
+		}
 		goto freeptr;
 	} else {
+		DBG("Start async msg loop.");
 		for(i = 0; i < sizeof(async_cmd)/sizeof(char); i++) {
-			if (pkt->cmd == async_cmd[i]) {
+			if (T(pkt->cmd) == async_cmd[i]) {
 				/* TODO: pass to /proc/something or similar, or log
 					in case nobody has registered for async messages */
+				TOGGLEB(pkt);
 				_the_bcc.async_callback(pkt);
-				transmit_ack();
 				DBGF("Received async msg: %d (0x%x)", pkt->cmd, pkt->cmd);
 				return;		// Callback Funktion kfree's memory
 			}
 		}
 	}
-	printk(KERN_DEBUG "State = %d, cmd = %x", l2_state, pkt->cmd);
-	transmit_ack();
+	DBGF("State = %d, cmd = %x", l2_state, pkt->cmd);
 	
 /* If nobody waited for a packet, the packet memory is also just kfree'd */ 
 freeptr:
@@ -496,12 +504,20 @@ exit:
 }
 EXPORT_SYMBOL(transmit_packet);
 
-/* TODO:
+/* Every time another async function is registered,
+*	the pointer to the old one is discarded
+* ATTENTION: Can be exploited: 
+*	- EVERYBODY can call this function
+*	- what, if the module leaves us, but the pointer doesn't point to NULL?
+*	--> the leaving module should always call register_async_callback(NULL) before leaving!
+*/
 int register_async_callback(void *func_ptr)
 {
+// TODO: do we need any checks here?
+	_the_bcc.async_callback = func_ptr;
+	return 0;
 }
 EXPORT_SYMBOL(register_async_callback);
-*/
 
 static void bcc_set_termios (struct tty_struct *tty, struct ktermios * old) 
 {
