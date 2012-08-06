@@ -137,6 +137,7 @@ unsigned char *create_ack_buf(uint8_t toggle, unsigned char *tx_buff);
 unsigned char *create_sync_buf(unsigned char *tx_buff);
 
 int transmit_packet(struct bcc_packet *pkt,  uint8_t resp_cmd);
+int register_async_callback(void *func_ptr);
 
 int add_device_entry(struct cdev *cdev, int minor, char *dev_name);
 void remove_device_entry(int minor);
