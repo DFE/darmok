@@ -9,7 +9,7 @@
  *	It can be compiled as a module or straight into the kernel.
  */
 #include <linux/version.h>
-#include <linux/module.h>
+ #include <linux/module.h>
 #include <linux/tty.h>
 #include <linux/tty_driver.h>
 #include <linux/tty_ldisc.h>
@@ -144,12 +144,12 @@ int transmit_msg(void)
 	if (tty->driver && tty->driver->write) {
 		memset(tx_buff, 0, (sizeof(tx_buff)/sizeof(tx_buff[0])));	
 		
-		printk(KERN_DEBUG "toggle = %d, pkt: %x\n", toggle_t.tx, (pkt->cmd & ~TOGGLE_BITMASK) | TOGGLE_SHIFT(toggle_t.tx));
+		printk(KERN_DEBUG "toggle = %d, pkt: 0x%x\n", toggle_t.tx, (pkt->cmd & ~TOGGLE_BITMASK) | TOGGLE_SHIFT(toggle_t.tx));
 		pkt->cmd = ((pkt->cmd & ~TOGGLE_BITMASK) | TOGGLE_SHIFT(toggle_t.tx)); // FIXME: better macro or delete this comment
 		
 		pkt_len = serialize_packet(pkt, tx_buff);
 	
-		DBGF("%s Transmitting packet (cmd = %x) through driver.\n", BCC, *(tx_buff+1));
+		DBGF("%s Transmitting packet (cmd = 0x%x) through driver.\n", BCC, *(tx_buff+1));
 		PRINTKN(tx_buff, 10);
 		ret = tty->driver->write(tty, tx_buff, pkt_len);
 
@@ -176,7 +176,7 @@ void transmit_ack(void)
 	struct tty_struct *tty = _the_bcc.tty;
 	
 	if (tty->driver && tty->driver->write) {
-		DBGF("%s Transmitting ack through driver (toggle-bit: %x).\n", BCC, toggle_t.rx);
+		DBGF("%s Transmitting ack through driver (toggle-bit: 0x%x).\n", BCC, toggle_t.rx);
 
 		if(toggle_t.rx) {
 			ret = tty->driver->write(tty, ACK_BUF_RX_0, 5);
@@ -219,14 +219,19 @@ void rx_worker_thread(struct work_struct *work)
 	if (l2_state == RQ_STD && T(pkt->cmd) == DRBCC_ACK) {
 		printk(KERN_DEBUG "*** l2_state = RQ_STD\n");
 		TOGGLEB(pkt);
+		DBGF("pkt->cmd: 0x%x", pkt->cmd);
 		_the_bcc.resp = pkt;
 		_the_bcc.resp->cmd = DRBCC_CMD_ILLEGAL; 
+		pkt = NULL;
+		DBGF("(1) rep>cmd: 0x%x", _the_bcc.resp->cmd);
 		toggle_t.tx = !toggle_t.tx;	
-		printk(KERN_DEBUG "transaction_ready++; new toggle = %d \n", toggle_t.tx );
+		DBGF("transaction_ready++; new toggle = %d \n", toggle_t.tx );
 		transaction_ready = 1;	
+		DBG("transaction_ready = 1, RQ_WAIT");
+		DBGF("(2) rep>cmd: 0x%x", _the_bcc.resp->cmd);
 		wake_up_interruptible(&wq);	
 		l2_state = NONE;
-		goto freeptr;
+		return;
 	}
 
 	if (l2_state == RQ_STD_ANS && T(pkt->cmd) == DRBCC_ACK) {
@@ -244,8 +249,10 @@ void rx_worker_thread(struct work_struct *work)
 		} 
 		TOGGLEB(pkt);
 		_the_bcc.resp = pkt; 
+		pkt = NULL;
 		l2_state = NONE;
 		transaction_ready = 1;		
+		DBG("transaction_ready = 1, RQ_WAIT_ANS");
 		wake_up_interruptible(&wq);	
 		return;
 	}
@@ -255,7 +262,7 @@ void rx_worker_thread(struct work_struct *work)
 		if(_the_bcc.async_callback == NULL) {
 			DBG("_the_bcc.async_callback == NULL)");
 		} else {
-			DBGF("Msg with false toggle bit: %x.", toggle_t.rx); 
+			DBGF("Msg with false toggle bit: 0x%x.", toggle_t.rx); 
 		}
 		goto freeptr;
 	} else {
@@ -271,12 +278,14 @@ void rx_worker_thread(struct work_struct *work)
 			}
 		}
 	}
-	DBGF("State = %d, cmd = %x", l2_state, pkt->cmd);
+	DBGF("State = %d, cmd = 0x%x", l2_state, pkt->cmd);
 	
 /* If nobody waited for a packet, the packet memory is also just kfree'd */ 
 freeptr:
 	printk(KERN_DEBUG "Free pointer to pkt (%p)\n", pkt);
 	kfree(pkt);
+	pkt = NULL;
+//	_the_bcc.resp = NULL;
 }
 
 // TODO: Asynchronous status updates
@@ -288,6 +297,12 @@ void receive_msg(unsigned char *buf, uint8_t len)
 
 	do {
 		pkt = (struct bcc_packet *) kmalloc(sizeof(struct bcc_packet), GFP_KERNEL);
+		printk(KERN_DEBUG "Kmalloced pkt (%p)\n", pkt);
+
+		if (!pkt) {
+			DBG("Out of memory!");
+			return;
+		}
 		memset(pkt, 0, sizeof(struct bcc_packet));
 		
 		ret = deserialize_packet(&buf[readc], pkt, len-readc);
@@ -295,24 +310,32 @@ void receive_msg(unsigned char *buf, uint8_t len)
 		if(ret >= 0) {
 			DBG("Succeeded parsing message to struct bcc_packet");
 		} else if(ret == -EAGAIN) {
+			//TODO: just for testing: throw away party parsed packets
+			//kfree(pkt);
 			DBG("No full packet parsed, try again later");
 			/* Throttle is still 0 here */
 	//		do_throttle(1, tty);
 			return;
 		} else if(ret < 0) {
+			DBGF("%s: Free packet with adress %p", __FUNCTION__, pkt);
+			kfree(pkt);
+			pkt = NULL;
 			DBG("Failure while parsing packet.");
 			return;
 		}	
-	
-		INIT_WORK(&pkt->work, rx_worker_thread);
+
+		if (!pkt)
+			DBG ("pkt was Null!");
+
+		INIT_WORK(&(pkt->work), rx_worker_thread);
 		queue_work(_the_bcc.wkq, &pkt->work);
-		printk(KERN_DEBUG "______Command before Schedule: %d (%x)__________\n", pkt->cmd, pkt->cmd);
+		readc += (ret + MSG_MIN_LEN);
+		DBGF("readc = %d, len: %d", readc, len);
+	
+		printk(KERN_DEBUG "______Command before Schedule: %d (0x%x)__________\n", pkt->cmd, pkt->cmd);
 		schedule();
 	
-		readc += (ret + MSG_MIN_LEN);
-		DBGF("readc = %d", readc);
-	
-		printk(KERN_DEBUG "______Command: %d (%x)__________\n", pkt->cmd, pkt->cmd);
+		printk(KERN_DEBUG "______Command of _the_bcc.resp after Schedule: %d (0x%x)__________\n", _the_bcc.resp->cmd, _the_bcc.resp->cmd);
 		
 	} while(readc < len); 
 }
@@ -330,7 +353,7 @@ static void bcc_receive_buf(struct tty_struct *tty, const unsigned char *cp, cha
 	const unsigned char 		*p;
 	char				*f, flags = TTY_NORMAL;
 
-	DBGF("Received %d bytes from driver\n", count);
+	DBGF("Received %d bytes from driver: \n", count);
 	PRINTKN(cp, count);
 
 	if (count > MSG_MAX_BUFF) {
@@ -348,7 +371,7 @@ static void bcc_receive_buf(struct tty_struct *tty, const unsigned char *cp, cha
 		switch (flags) {
 		case TTY_NORMAL:	
 			newbuf[j] = *p;
-//			DBGF("Char %d (%x)", newbuf[j], newbuf[j]);
+//			DBGF("Char %d (0x%x)", newbuf[j], newbuf[j]);
 			j++;
 			break;
 		case TTY_OVERRUN:
@@ -356,13 +379,12 @@ static void bcc_receive_buf(struct tty_struct *tty, const unsigned char *cp, cha
 //			do_throttle(1, tty);
 			break;	
 		default:
-			DBGF("Flags at nr. %d was: %x", count-i, flags);
+			DBGF("Flags at nr. %d was: 0x%x", count-i, flags);
 			break;
 		}
 	}
 
 // TODO: remove all PRINTKNs
-	PRINTKN(newbuf, j);
 	receive_msg(newbuf, j);
 }
 
@@ -383,7 +405,7 @@ int synchronize(void)
 	
 	l2_state = RQ_STD;
 	ret = perform_transaction();
-	printk(KERN_DEBUG "***** Transmitted sync \n");	
+	DBG("***** Transmitted sync");	
 	
 	if (ret < 0) {
 		DBGF("Error %d occured on sync", ret);
@@ -392,10 +414,10 @@ int synchronize(void)
 	toggle_t.rx = 0;
 	toggle_t.tx = 0;
  	
-	DBGF("**** 1 _the_bcc.curr->cmd = %d\n", _the_bcc.curr->cmd);
+	DBGF("**** 1 _the_bcc.curr->cmd = 0x%x\n", _the_bcc.curr->cmd);
 	_the_bcc.curr = save;
 	l2_state = l2_state_save;
-	DBGF("**** 2 _the_bcc.curr->cmd = %d\n", _the_bcc.curr->cmd);
+	DBGF("**** 2 _the_bcc.curr->cmd = 0x%x\n", _the_bcc.curr->cmd);
 	return ret;
 }
 
@@ -405,18 +427,20 @@ int perform_transaction(void)
 	int i = 0;
 	int ret = 0;
 
-	DBGF("**** _the_bcc.curr->cmd = %d\n", _the_bcc.curr->cmd);
+	DBGF("**** _the_bcc.curr->cmd = 0x%x\n", _the_bcc.curr->cmd);
 
 	if(_the_bcc.initial) {
+		DBG("Initial call to perform transaction, therefore syncing");
 		_the_bcc.initial--;
 		ret = synchronize();
 		if (ret < 0) {
 			ERR("**** Syncing failed");
+		//	_the_bcc.initial++;
                 	return ret;
 		}	
 	}
 	
-	DBGF("**** _the_bcc.curr->cmd = %d\n", _the_bcc.curr->cmd);
+	DBGF("**** _the_bcc.curr->cmd = 0x%x\n", _the_bcc.curr->cmd);
 	_the_bcc.temp_tx = *(_the_bcc.curr);
 
 	ret = transmit_msg();
@@ -426,7 +450,7 @@ int perform_transaction(void)
 		return ret;
 	}
 		
-	DBGF("***** Transmitted msg with cmd %d \n", _the_bcc.temp_tx.cmd);	
+	DBGF("***** Transmitted msg with cmd 0x%x \n", _the_bcc.temp_tx.cmd);	
 
 /* TODO: Rly? hier eine do-while-Schleife? dann aber konsequent sein 
 *	und eine auch in perform_transaction_ans implementieren...
@@ -434,13 +458,16 @@ int perform_transaction(void)
 	do {
 /* TODO: Oooops: race condition could occure? Actually, we should be save, since no two threads should ever be on this same point on a single core processor */
 		transaction_ready = 0;
+		DBG("transaction_ready = 0");
 		ret = wait_event_interruptible_timeout(wq, transaction_ready!=0, 2*BCC_PKT_TIMEOUT);
+		DBGF("transaction_ready = %d", transaction_ready);
+		transaction_ready = 0;
+		DBGF("ret = %d", ret);
 
 		if (ret == 0) {
-			ERR("Transaction failed on 'send message' (Timeout).");
+			ERR("Transaction failed on 'send message' (Timeout).");	
 			ret = -EFAULT; 	// is there a better return value for a timeout? e.g. -EBUSY?
-		}
-		if (ret < 0) {
+		} else if (ret < 0) {
 			ERR("Transaction failed on 'send message' (Error).");
 			return -EFAULT;
 		}
@@ -478,27 +505,37 @@ int transmit_packet(struct bcc_packet * pkt, uint8_t resp_cmd)
 		l2_state = RQ_STD;
 	}
 	ret = perform_transaction();
+	DBGF("Ret: %d", ret);
 	
 	if (ret < 0) {
-		printk(KERN_WARNING "Transaction of packet with command %d failed\n", _the_bcc.curr->cmd);
+		printk(KERN_WARNING "Transaction of packet with command 0x%x failed\n", _the_bcc.curr->cmd);
+		_the_bcc.curr->cmd = DRBCC_CMD_ILLEGAL;
 		goto exit;	
 	}
 	
-	/* TODO: implement this? */
-	if ((_the_bcc.resp->cmd != resp_cmd) && (resp_cmd != DRBCC_CMD_ILLEGAL)) {
-		printk(KERN_WARNING "Received packet with wrong response command: %d\n", _the_bcc.resp->cmd);
+	if (resp_cmd == DRBCC_CMD_ILLEGAL) {
+		DBG("Expected no answer for my command. Just returning after receiving Ack.");
+		_the_bcc.curr->cmd = DRBCC_CMD_ILLEGAL;
+		goto exit;
+	} else if (_the_bcc.resp->cmd != resp_cmd) {
+		printk(KERN_WARNING "Received packet with wrong response command: 0x%x\n", _the_bcc.resp->cmd);
+		_the_bcc.curr->cmd = DRBCC_CMD_ILLEGAL;
 		ret = -EFAULT; 	/* TODO: is there a better err value for this? */
 		goto exit;
 	}
 	
-exit:
 // TODO: How should I signal an invalid pkt to the upper layers?
 	*(_the_bcc.curr) = *(_the_bcc.resp);
-	up(&sem_access);
-	DBG("sem_access semaphore is up now");
 
 /* TODO: test auf memory leak */
+	DBGF("%s: Free packet with adress %p", __FUNCTION__, _the_bcc.resp);
 	kfree(_the_bcc.resp);
+//	_the_bcc.resp = NULL;
+
+exit:
+	DBGF("Curr cmd: 0x%x", _the_bcc.curr->cmd);
+	up(&sem_access);
+	DBG("sem_access semaphore is up now");
 
 	return ret;
 }
