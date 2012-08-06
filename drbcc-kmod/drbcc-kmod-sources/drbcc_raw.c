@@ -42,12 +42,12 @@ void drbcc_rcv_msg_async(struct bcc_packet *pkt)
  	
 	pkt->cmd |= TOGGLE_SHIFT(toggle_t.rx);
 	ret = serialize_packet(pkt, buf);
-	down_interruptible(&transaction);
+//	down_interruptible(&transaction);
 	if (kfifo_put(fifo, buf, ret) < ret) {
 		ERR("Putting data to fifo failed.");
 	}
-	up(&transaction);
-	DBGF("Put asynchronous packet with cmd = %x into fifo. fifolen = %d", pkt->cmd, kfifo_len(fifo));
+//	up(&transaction);
+	DBGF("Put asynchronous packet with cmd = 0x%x into fifo. fifolen = %d", pkt->cmd, kfifo_len(fifo));
 
 	kfree(pkt);
 }
@@ -59,15 +59,6 @@ void drbcc_rcv_msg_async(struct bcc_packet *pkt)
 *	\return 0 on success, -EAGAIN if allocating memory for fifo buffer failed 	
 */
 int drbcc_raw_open(struct inode * ino, struct file * file) {	
-	DEFINE_SPINLOCK(spin);
-	DBG("Open through drbcc_raw_open, init new kfifo.");
-	fifo = kfifo_alloc(READ_BUF, GFP_KERNEL, &spin);
-	if(!fifo) {
-		DBG("Allocating fifo buffer in open function failed.");
-		return -EAGAIN;
-	}
-	memset(fifo->buffer, 0,  kfifo_len(fifo));
-
 	register_async_callback(drbcc_rcv_msg_async);
 	
 	return 0;
@@ -81,11 +72,9 @@ int drbcc_raw_open(struct inode * ino, struct file * file) {
 */
 int drbcc_raw_close(struct inode * inode, struct file * file)
 {
+	register_async_callback(NULL);	// Unregister callback method
+
 	DBG("Closing operation for device called.");
-	if(!fifo) {
-		DBG("Fifo buffer was never initialized.");
-	}
-	kfifo_free(fifo);
 
 	return 0;
 }
@@ -174,7 +163,7 @@ ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t si
 	PRINTKN(buf, size);
 
 	if((ret = deserialize_packet(buf, &pkt, size)) < 0) {
-		ERR("Deserializing packet failed because errno %x", ret);
+		ERR("Deserializing packet failed because errno 0x%x", ret);
 		return -EFAULT;
 	}
 
@@ -213,12 +202,12 @@ ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t si
 /*	pkt.cmd = buf[0];
 	memcpy(pkt.data, &buf[1], size-1); */
 
-	DBGF("Copied buf (%d elements): cmd = %x, data:", size, pkt.cmd);
+	DBGF("Copied buf (%d elements): cmd = 0x%x, data:", size, pkt.cmd);
 	PRINTKN(pkt.data, pkt.payloadlen);
 
 	/*  */
 	pkt.cmd = (pkt.cmd & ~TOGGLE_BITMASK);
-	DBGF("raw wants to send packet with cmd %d (%x) and to receive packet with cmd %d (%x)", pkt.cmd, pkt.cmd, 
+	DBGF("raw wants to send packet with cmd %d (0x%x) and to receive packet with cmd %d (0x%x)", pkt.cmd, pkt.cmd, 
 		RSP_CMD(pkt.cmd), RSP_CMD(pkt.cmd));
 	if ((ret = transmit_packet(&pkt, RSP_CMD(pkt.cmd))) < 0) {
 		ERR(BRAW "Error while trying to send message.");
@@ -246,7 +235,7 @@ ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t si
 			ERR("Putting data to fifo failed.");
 			return -EFAULT;
 		}
-		DBGF("Put packet with cmd = %x into fifo. fifolen = %d", pkt.cmd, kfifo_len(fifo));
+		DBGF("Put packet with cmd = 0x%x into fifo. fifolen = %d", pkt.cmd, kfifo_len(fifo));
 	}	
 
 //	DBG("Content of the fifo: ");	
@@ -272,6 +261,7 @@ static const struct file_operations drbcc_raw_fops = {
 };
 
 int drbcc_raw_init_module(void) {
+	DEFINE_SPINLOCK(spin);
 	int ret;
 	printk("HydraIP DRBCC RAW driver: %s.\n", __FUNCTION__);
 
@@ -281,12 +271,23 @@ int drbcc_raw_init_module(void) {
 
 	ret = add_device_entry(&cdev, MINOR_NR_RAW, "drbcc-raw");
 
-	return ret;
+	DBG("Init new kfifo.");
+	fifo = kfifo_alloc(READ_BUF, GFP_KERNEL, &spin);
+	if(!fifo) {
+		DBG("Allocating fifo buffer in open function failed.");
+		return -EAGAIN;
+	}
+	memset(fifo->buffer, 0,  kfifo_len(fifo));
 
+	return ret;
 }
 
 void drbcc_raw_cleanup_module(void) {
 	printk("Unload HydraIP DRBCC RAW driver: %s.\n", __FUNCTION__);
+	if(!fifo) {
+		DBG("Fifo buffer was never initialized.");
+	}
+	kfifo_free(fifo);
 
 	cdev_del(&cdev);
 	DBGF("cdev_del: %p", &cdev);
