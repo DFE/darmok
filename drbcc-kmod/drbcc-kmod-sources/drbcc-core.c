@@ -48,6 +48,8 @@ struct tty_struct *ttyp;
 #define RESEND_THRESHOLD	2	
 #define RX_CURR_BUF_CNT		2
 
+#define DRIVER_THROTTLING
+
 #ifndef BCC
 #define BCC "[DRBCC_CORE] "
 #endif
@@ -131,6 +133,16 @@ void receive_msg(unsigned char *buf, uint8_t len);
 */
 #define ACK_RECEIVED 	10
 
+#ifdef DRIVER_THROTTLING
+/* FIXME: rewrite code? copied from drivers/char/n_tty.c */
+static void check_unthrottle(struct tty_struct * tty)
+{
+	if (tty->count &&
+	    test_and_clear_bit(TTY_THROTTLED, &tty->flags) && 
+	    tty->driver->unthrottle)
+		tty->driver->unthrottle(tty);
+}
+#endif
 /*
 *
 ***********   LAYER 1  ***************
@@ -144,7 +156,7 @@ int transmit_msg(void)
 	if (tty->driver && tty->driver->write) {
 		memset(tx_buff, 0, (sizeof(tx_buff)/sizeof(tx_buff[0])));	
 		
-		printk(KERN_DEBUG "toggle = %d, pkt: 0x%x\n", toggle_t.tx, (pkt->cmd & ~TOGGLE_BITMASK) | TOGGLE_SHIFT(toggle_t.tx));
+		DBGF("toggle = %d, pkt: 0x%x\n", toggle_t.tx, (pkt->cmd & ~TOGGLE_BITMASK) | TOGGLE_SHIFT(toggle_t.tx));
 		pkt->cmd = ((pkt->cmd & ~TOGGLE_BITMASK) | TOGGLE_SHIFT(toggle_t.tx)); // FIXME: better macro or delete this comment
 		
 		pkt_len = serialize_packet(pkt, tx_buff);
@@ -191,9 +203,10 @@ int toggle_bit_save_rx(struct bcc_packet *pkt) {
 	if ((pkt->cmd & TOGGLE_BITMASK) == TOGGLE_SHIFT(toggle_t.rx)) {	
 		transmit_ack();
 		toggle_t.rx = !toggle_t.rx;
+		DBGF("New rx_toggle: 0x%x", toggle_t.rx);
 		return 0;	
 	} else {
-		DBGF("**** Err on toggle bit (Expected: %d, received: %d (pkt->cmd = %d))!\n", 
+		DBGF("**** Err on toggle bit (Expected: 0x%x, received: 0x%x (pkt->cmd = 0x%x))!\n", 
 			TOGGLE_SHIFT(toggle_t.rx), (pkt->cmd & TOGGLE_BITMASK), pkt->cmd);
 		// FIXME: Hack Alert!!! non-atomic toggling
 		toggle_t.rx = !toggle_t.rx;
@@ -217,7 +230,7 @@ void rx_worker_thread(struct work_struct *work)
 	}
 
 	if (l2_state == RQ_STD && T(pkt->cmd) == DRBCC_ACK) {
-		printk(KERN_DEBUG "*** l2_state = RQ_STD\n");
+		DBG("*** l2_state = RQ_STD\n");
 		TOGGLEB(pkt);
 		DBGF("pkt->cmd: 0x%x", pkt->cmd);
 		_the_bcc.resp = pkt;
@@ -235,15 +248,15 @@ void rx_worker_thread(struct work_struct *work)
 	}
 
 	if (l2_state == RQ_STD_ANS && T(pkt->cmd) == DRBCC_ACK) {
-		printk(KERN_DEBUG "*** l2_state = RQ_STD_ANS\n");
+		DBG("*** l2_state = RQ_STD_ANS\n");
 		toggle_t.tx = !toggle_t.tx;	
-		printk(KERN_DEBUG "new toggle = %d\n", toggle_t.tx );
+		DBGF("new tx_toggle = %d\n", toggle_t.tx );
 		l2_state = RQ_WAIT_ANS;
 		goto freeptr;
 	}
 
 	if(l2_state == RQ_WAIT_ANS) {
-		printk(KERN_DEBUG "*** l2_state = RQ_WAIT_ANS\n");
+		DBG("*** l2_state = RQ_WAIT_ANS\n");
 		if (toggle_bit_save_rx(pkt) < 0) {
 			goto freeptr;
 		} 
@@ -260,7 +273,7 @@ void rx_worker_thread(struct work_struct *work)
 /* Asynchronous messages */ 
 	if ((toggle_bit_save_rx(pkt) < 0) || (_the_bcc.async_callback == NULL)) {
 		if(_the_bcc.async_callback == NULL) {
-			DBG("_the_bcc.async_callback == NULL)");
+			DBG("_the_bcc.async_callback == NULL");
 		} else {
 			DBGF("Msg with false toggle bit: 0x%x.", toggle_t.rx); 
 		}
@@ -278,17 +291,16 @@ void rx_worker_thread(struct work_struct *work)
 			}
 		}
 	}
-	DBGF("State = %d, cmd = 0x%x", l2_state, pkt->cmd);
 	
 /* If nobody waited for a packet, the packet memory is also just kfree'd */ 
 freeptr:
-	printk(KERN_DEBUG "Free pointer to pkt (%p)\n", pkt);
+	DBGF("State = %d, cmd = 0x%x", l2_state, pkt->cmd);
+	DBGF("Free pointer to pkt (%p)\n", pkt);
 	kfree(pkt);
 	pkt = NULL;
-//	_the_bcc.resp = NULL;
+	_the_bcc.resp = NULL;
 }
 
-// TODO: Asynchronous status updates
 void receive_msg(unsigned char *buf, uint8_t len)
 {
 	uint8_t			readc = 0;
@@ -296,15 +308,17 @@ void receive_msg(unsigned char *buf, uint8_t len)
 	struct bcc_packet	*pkt = NULL;
 
 	do {
-		pkt = (struct bcc_packet *) kmalloc(sizeof(struct bcc_packet), GFP_KERNEL);
-		printk(KERN_DEBUG "Kmalloced pkt (%p)\n", pkt);
-
 		if (!pkt) {
-			DBG("Out of memory!");
-			return;
-		}
-		memset(pkt, 0, sizeof(struct bcc_packet));
-		
+			pkt = (struct bcc_packet *) kmalloc(sizeof(struct bcc_packet), GFP_KERNEL);
+			DBGF("Kmalloced pkt (%p)\n", pkt);
+
+			if (!pkt) {
+				DBG("Out of memory!");
+				return;
+			}
+			memset(pkt, 0, sizeof(struct bcc_packet));		
+		} /* else: packet was already partly parsed */
+
 		ret = deserialize_packet(&buf[readc], pkt, len-readc);
 
 		if(ret >= 0) {
@@ -315,13 +329,19 @@ void receive_msg(unsigned char *buf, uint8_t len)
 			DBG("No full packet parsed, try again later");
 			/* Throttle is still 0 here */
 	//		do_throttle(1, tty);
-			return;
+			// FIXME: potential memory leak because I never free partly parsed packet when I don't encounter stop char
+			//continue; --> did not work, because somehow I was stuck in an infinite loop
+ 			kfree(pkt);
+			pkt = NULL;
+//			return;
+			break;
 		} else if(ret < 0) {
 			DBGF("%s: Free packet with adress %p", __FUNCTION__, pkt);
 			kfree(pkt);
 			pkt = NULL;
 			DBG("Failure while parsing packet.");
-			return;
+//			return;
+			break;
 		}	
 
 		if (!pkt)
@@ -332,12 +352,15 @@ void receive_msg(unsigned char *buf, uint8_t len)
 		readc += (ret + MSG_MIN_LEN);
 		DBGF("readc = %d, len: %d", readc, len);
 	
-		printk(KERN_DEBUG "______Command before Schedule: %d (0x%x)__________\n", pkt->cmd, pkt->cmd);
+		DBGF("______Command before Schedule: %d (0x%x)__________\n", pkt->cmd, pkt->cmd);
+		pkt = NULL;
 		schedule();
 	
-		printk(KERN_DEBUG "______Command of _the_bcc.resp after Schedule: %d (0x%x)__________\n", _the_bcc.resp->cmd, _the_bcc.resp->cmd);
-		
 	} while(readc < len); 
+
+#ifdef DRIVER_THROTTLING
+	check_unthrottle(_the_bcc.tty);
+#endif
 }
 
 /*	Possible buffers that can be received:
@@ -385,7 +408,13 @@ static void bcc_receive_buf(struct tty_struct *tty, const unsigned char *cp, cha
 	}
 
 // TODO: remove all PRINTKNs
+#ifdef DRIVER_THROTTLING
+	if (!test_and_set_bit(TTY_THROTTLED, &tty->flags) &&
+	    tty->driver->throttle)
+		tty->driver->throttle(tty);
+#endif
 	receive_msg(newbuf, j);
+
 }
 
 /*
@@ -415,6 +444,9 @@ int synchronize(void)
 	toggle_t.tx = 0;
  	
 	DBGF("**** 1 _the_bcc.curr->cmd = 0x%x\n", _the_bcc.curr->cmd);
+	DBGF("Free pkt with adress (%p)", _the_bcc.resp);
+	kfree(_the_bcc.resp);
+	_the_bcc.resp = NULL;
 	_the_bcc.curr = save;
 	l2_state = l2_state_save;
 	DBGF("**** 2 _the_bcc.curr->cmd = 0x%x\n", _the_bcc.curr->cmd);
@@ -490,7 +522,7 @@ int transmit_packet(struct bcc_packet * pkt, uint8_t resp_cmd)
 	int ret = 0;
 
 	if (!ttyp) {
-		printk(KERN_DEBUG "DRBCC-Core not ready yet.\n");
+		DBG("DRBCC-Core not ready yet.\n");
 		return -EAGAIN;
 	}
 
@@ -498,16 +530,17 @@ int transmit_packet(struct bcc_packet * pkt, uint8_t resp_cmd)
 	_the_bcc.curr = pkt;
 
 	if (resp_cmd != DRBCC_CMD_ILLEGAL) {
-		printk(KERN_DEBUG "**** Send transaction and expect ans\n");
+		DBG("**** Send transaction and expect ans\n");
 		l2_state = RQ_STD_ANS;
 	} else {
-		printk(KERN_DEBUG "**** Send transaction without to expect ans\n");
+		DBG("**** Send transaction without to expect ans\n");
 		l2_state = RQ_STD;
 	}
 	ret = perform_transaction();
 	DBGF("Ret: %d", ret);
-	
-	if (ret < 0) {
+
+	// FIXME: Mean hack, because actually !(_the_bcc.resp) should be signalised by a negative ret value :(	
+	if ((ret < 0) || !(_the_bcc.resp)) {
 		printk(KERN_WARNING "Transaction of packet with command 0x%x failed\n", _the_bcc.curr->cmd);
 		_the_bcc.curr->cmd = DRBCC_CMD_ILLEGAL;
 		goto exit;	
@@ -528,9 +561,9 @@ int transmit_packet(struct bcc_packet * pkt, uint8_t resp_cmd)
 	*(_the_bcc.curr) = *(_the_bcc.resp);
 
 /* TODO: test auf memory leak */
-	DBGF("%s: Free packet with adress %p", __FUNCTION__, _the_bcc.resp);
+	DBGF("%s: Transaction was success. Free packet with adress %p", __FUNCTION__, _the_bcc.resp);
 	kfree(_the_bcc.resp);
-//	_the_bcc.resp = NULL;
+	_the_bcc.resp = NULL;
 
 exit:
 	DBGF("Curr cmd: 0x%x", _the_bcc.curr->cmd);
@@ -629,16 +662,16 @@ static int bcc_open (struct tty_struct *tty)
 	ttyp = tty;
 
 	if (tty->driver) {
-		printk(KERN_DEBUG "+++++++ driver set in tty struct. ");
+		DBG("+++++++ driver set in tty struct. ");
 		if (!tty->driver->write) {
-			printk(KERN_DEBUG "But no driver->write function. ");
+			DBG("But no driver->write function. ");
 		} else {
-			printk(KERN_DEBUG " driver->write: %p ",  tty->driver->write);
+			DBGF(" driver->write: %p ",  tty->driver->write);
 		}
 	} else {
-		printk(KERN_DEBUG "++++++++ No driver set in tty struct. ");
+		DBG("++++++++ No driver set in tty struct. ");
 	}
-	printk(KERN_DEBUG "\n");
+	DBG("\n");
 	
 	if(tty->driver == NULL) {
 		DBG("No driver set in tty");
@@ -705,12 +738,11 @@ void bcc_close (struct tty_struct *tty)
 *	\param  arg		arguments to system call	
 *	\return value passed by the tty's generic ioctl function
 */
-static int bcc_ioctl(struct tty_struct* tty, struct file * file, unsigned int cmd, unsigned long arg) {
+int bcc_ioctl(struct tty_struct* tty, struct file * file, unsigned int cmd, unsigned long arg) {
 	/* TODO: if(Sig___) { ..}  */
-	printk(KERN_DEBUG "HydraIP DRBCC driver: %s (Faking IOCTL calls is fun!!).\n", __FUNCTION__);
-	return tty_mode_ioctl(tty, file, cmd, arg);
+	DBGF("HydraIP DRBCC driver: %s\n", __FUNCTION__);
+	return tty_mode_ioctl(_the_bcc.tty, file, cmd, arg);
 }
-
 
 static struct tty_ldisc bcc_ldisc = {
 	.magic 		= BCC_MAGIC,
