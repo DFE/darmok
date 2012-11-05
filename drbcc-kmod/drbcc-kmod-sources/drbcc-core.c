@@ -87,7 +87,7 @@ static struct bcc_struct _the_bcc = {
 };
 
 static unsigned char tx_buff[MSG_MAX_BUFF] = { 0 };
-uint8_t resp_cmd;
+static uint8_t resp_cmd;
 DECLARE_MUTEX(sem_access);
 static uint8_t transaction_ready = 0; 
 DECLARE_WAIT_QUEUE_HEAD(wq);
@@ -101,32 +101,32 @@ typedef enum {
 	RQ_STD, RQ_STD_ANS, RQ_WAIT_ANS, RQ_SYNC, NONE
 } GLOBAL_L2_STATES;
 
-char async_cmd[]  = { DRBCC_IND_STATUS, DRBCC_IND_ACCEL_EVENT };
+static char async_cmd[]  = { DRBCC_IND_STATUS, DRBCC_IND_ACCEL_EVENT };
 static char l2_state = NONE;
 
 /*
 * Layer 3 functions:
 */
-int send_sync_msg(void);
-int send_msg(void); 
-int send_msg_ans(void); 
+static int send_sync_msg(void);
+static int send_msg(void); 
+static int send_msg_ans(void); 
 
 /*
 * Layer 2 functions:
 * Transactionbased: Request-response-logic
 * Keeps track of the toggle bits
 */
-int perform_transaction(void);
-int perform_transaction_ans(void);
+static int perform_transaction(void);
+static int perform_transaction_ans(void);
 
 /*
 * Layer 1 functions:
 * Parsing: char[] <==> struct bcc_struct
 */
-int synchronize(void);
-int transmit_msg(void);
-void transmit_ack(void); 
-void receive_msg(unsigned char *buf, uint8_t len);
+static int synchronize(void);
+static int transmit_msg(void);
+static void transmit_ack(void); 
+static void receive_msg(unsigned char *buf, uint8_t len);
 
 /*
 * Return codes for inter-layer-communication
@@ -147,7 +147,7 @@ static void check_unthrottle(struct tty_struct * tty)
 *
 ***********   LAYER 1  ***************
 */
-int transmit_msg(void) 
+static int transmit_msg(void) 
 {
 	int pkt_len, ret = 0;
 	struct tty_struct *tty = _the_bcc.tty;
@@ -180,10 +180,10 @@ int transmit_msg(void)
 }
 
 /* Why a void function? Because I don't care! */
-void transmit_ack(void) 
+static void transmit_ack(void) 
 {
-#define ACK_BUF_RX_0 (char[]){0xfa, 0x00, 0x87, 0x0f, 0xfb}
-#define ACK_BUF_RX_1 (char[]){0xfa, 0x80, 0x8f, 0x8b, 0xfb}
+#define ACK_BUF_RX_0 (const char[]){0xfa, 0x00, 0x87, 0x0f, 0xfb}
+#define ACK_BUF_RX_1 (const char[]){0xfa, 0x80, 0x8f, 0x8b, 0xfb}
 	int ret = 0;
 	struct tty_struct *tty = _the_bcc.tty;
 	
@@ -199,7 +199,7 @@ void transmit_ack(void)
 	} 
 }
 
-int toggle_bit_save_rx(struct bcc_packet *pkt) {
+static int toggle_bit_save_rx(struct bcc_packet *pkt) {
 	if ((pkt->cmd & TOGGLE_BITMASK) == TOGGLE_SHIFT(toggle_t.rx)) {	
 		transmit_ack();
 		toggle_t.rx = !toggle_t.rx;
@@ -220,7 +220,7 @@ int toggle_bit_save_rx(struct bcc_packet *pkt) {
 	RQ_STD, RQ_STD_ANS, RQ_WAIT_ANS, NONE
 } GLOBAL_L2_STATES;*/
 /* Attention: resp pointer has to be kfree'd! */
-void rx_worker_thread(struct work_struct *work)
+static void rx_worker_thread(struct work_struct *work)
 {
 	int i = 0;
         struct bcc_packet *pkt = container_of(work, struct bcc_packet, work);
@@ -301,7 +301,7 @@ freeptr:
 	_the_bcc.resp = NULL;
 }
 
-void receive_msg(unsigned char *buf, uint8_t len)
+static void receive_msg(unsigned char *buf, uint8_t len)
 {
 	uint8_t			readc = 0;
 	int 			ret = 0;
@@ -421,7 +421,7 @@ static void bcc_receive_buf(struct tty_struct *tty, const unsigned char *cp, cha
 *
 ***********   LAYER 2   ***************
 */
-int synchronize(void)
+static int synchronize(void)
 {
 	int ret = 0;
 	struct bcc_packet *save = _the_bcc.curr;
@@ -454,7 +454,7 @@ int synchronize(void)
 }
 
 #define MAX_FAILED_PKT 3
-int perform_transaction(void) 
+static int perform_transaction(void) 
 {
 	int i = 0;
 	int ret = 0;
