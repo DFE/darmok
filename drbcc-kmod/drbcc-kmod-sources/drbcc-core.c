@@ -107,9 +107,9 @@ static char l2_state = NONE;
 /*
 * Layer 3 functions:
 */
-static int send_sync_msg(void);
-static int send_msg(void); 
-static int send_msg_ans(void); 
+// static int send_sync_msg(void);
+// static int send_msg(void); 
+// static int send_msg_ans(void); 
 
 /*
 * Layer 2 functions:
@@ -117,7 +117,7 @@ static int send_msg_ans(void);
 * Keeps track of the toggle bits
 */
 static int perform_transaction(void);
-static int perform_transaction_ans(void);
+//static int perform_transaction_ans(void);
 
 /*
 * Layer 1 functions:
@@ -226,7 +226,7 @@ static void rx_worker_thread(struct work_struct *work)
         struct bcc_packet *pkt = container_of(work, struct bcc_packet, work);
 
 	if (!pkt) {
-		printk(KERN_WARNING "Pkt pointer was null, something went terribly wrong.\n");
+		printk(KERN_NOTICE "Pkt pointer was null, something went terribly wrong.\n");
 	}
 
 	if (l2_state == RQ_STD && T(pkt->cmd) == DRBCC_ACK) {
@@ -541,7 +541,7 @@ int transmit_packet(struct bcc_packet * pkt, uint8_t resp_cmd)
 
 	// FIXME: Mean hack, because actually !(_the_bcc.resp) should be signalised by a negative ret value :(	
 	if ((ret < 0) || !(_the_bcc.resp)) {
-		printk(KERN_WARNING "Transaction of packet with command 0x%x failed\n", _the_bcc.curr->cmd);
+		printk(KERN_NOTICE "Transaction of packet with command 0x%x failed\n", _the_bcc.curr->cmd);
 		_the_bcc.curr->cmd = DRBCC_CMD_ILLEGAL;
 		goto exit;	
 	}
@@ -551,7 +551,7 @@ int transmit_packet(struct bcc_packet * pkt, uint8_t resp_cmd)
 		_the_bcc.curr->cmd = DRBCC_CMD_ILLEGAL;
 		goto exit;
 	} else if (_the_bcc.resp->cmd != resp_cmd) {
-		printk(KERN_WARNING "Received packet with wrong response command: 0x%x\n", _the_bcc.resp->cmd);
+		printk(KERN_NOTICE "Received packet with wrong response command: 0x%x\n", _the_bcc.resp->cmd);
 		_the_bcc.curr->cmd = DRBCC_CMD_ILLEGAL;
 		ret = -EFAULT; 	/* TODO: is there a better err value for this? */
 		goto exit;
@@ -776,7 +776,7 @@ int add_device_entry(struct cdev *cdev, int minor, char *dev_name) {
 	ret = register_chrdev_region(devno, 1, dev_name);
 	
 	if(ret < 0) {
-		printk(KERN_WARNING "%s can't get major %d\n", dev_name, BCC_TTY_MAJOR);
+		printk(KERN_NOTICE "%s can't get major %d\n", dev_name, BCC_TTY_MAJOR);
 		return ret;
 	}
 	
@@ -785,7 +785,7 @@ int add_device_entry(struct cdev *cdev, int minor, char *dev_name) {
 	*/
 	ret = cdev_add(cdev, devno, 1);
 	if(ret < 0) {
-                printk(KERN_WARNING "%s: Addind device failed.\n", dev_name);
+                printk(KERN_NOTICE "%s: Addind device failed.\n", dev_name);
                 return ret;
 	}
 
@@ -838,11 +838,11 @@ int __drbcc_init(void)
 void __drbcc_exit(void) {
 	int i;
 
-	printk("HydraIP DRBCC driver unloaded...\n");
+	printk(KERN_INFO "HydraIP DRBCC driver unloaded...\n");
 
 	/* TFM FIXME: HACK ALERT */
 	while (0 != _the_bcc.opened ) {
-		printk(KERN_WARNING "DRBCC: %d open file descriptors on line discipline's serial device file.\n", _the_bcc.opened);
+		printk(KERN_NOTICE "DRBCC: %d open file descriptors on line discipline's serial device file.\n", _the_bcc.opened);
 
 		/* Hangup here ... */
 		tty_hangup(ttyp);		

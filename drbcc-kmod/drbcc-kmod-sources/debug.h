@@ -11,7 +11,7 @@
 //#endif
 
 #ifndef ERR
-#define ERR(vfmt, args...) { 	(void)printk(KERN_ERR "*****AIEEEE: %s [%s:%d] " vfmt "\n", \
+#define ERR(vfmt, args...) { 	(void)printk(KERN_NOTICE "*****AIEEEE: %s [%s:%d] " vfmt "\n", \
 				__FUNCTION__, __FILE__, __LINE__, ##args); }
 #endif
 

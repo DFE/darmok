@@ -102,7 +102,7 @@ ssize_t drbcc_raw_read(struct file * file, char __user * user, size_t num1, loff
 		goto out;
 	}
 
-	printk("HydraIP DRBCC driver: %s.\n", __FUNCTION__);
+	DBGF("HydraIP DRBCC driver: %s.\n", __FUNCTION__);
 	//PRINTKN(fifo->buffer, fifo->size);
 	DBGF("fifo contains %d elements in its buffer", kfifo_len(fifo));
 
@@ -147,7 +147,7 @@ ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t si
 		DBG("Fifo buffer could not be retrieved.");
 	}
 
-	printk("HydraIP DRBCC driver: %s.\n", __FUNCTION__);
+	DBGF("HydraIP DRBCC driver: %s.\n", __FUNCTION__);
 
 	if ( size > MSG_MAX_BUFF ) {
 		ERR(BRAW "Can't send message that is bigger than maximal message size.");	
@@ -246,7 +246,7 @@ ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t si
 
 int drbcc_raw_ioctl(struct inode * ino, struct file * file, unsigned int cmd, unsigned long arg) {
 	/* TODO: if(Sig___) { ..}  */
-	printk("HydraIP DRBCC driver: %s.\n", __FUNCTION__);
+	DBGF("HydraIP DRBCC driver: %s.\n", __FUNCTION__);
 	DBGF("Cmd: %d, arg: %ld ", cmd, arg );
 	return 0;
 }
@@ -263,7 +263,7 @@ static const struct file_operations drbcc_raw_fops = {
 int drbcc_raw_init_module(void) {
 	DEFINE_SPINLOCK(spin);
 	int ret;
-	printk("HydraIP DRBCC RAW driver: %s.\n", __FUNCTION__);
+	DBGF("HydraIP DRBCC RAW driver: %s.\n", __FUNCTION__);
 
 	/* Register device handle in kernel*/
 	cdev_init(&cdev, &drbcc_raw_fops);
@@ -283,7 +283,7 @@ int drbcc_raw_init_module(void) {
 }
 
 void drbcc_raw_cleanup_module(void) {
-	printk("Unload HydraIP DRBCC RAW driver: %s.\n", __FUNCTION__);
+	DBGF("Unload HydraIP DRBCC RAW driver: %s.\n", __FUNCTION__);
 	if(!fifo) {
 		DBG("Fifo buffer was never initialized.");
 	}
