@@ -40,7 +40,7 @@ void drbcc_rcv_msg_async(struct bcc_packet *pkt)
 	unsigned char buf[MSG_MAX_BUFF];
 	int ret;
  	
-	pkt->cmd |= TOGGLE_SHIFT(toggle_t.rx);
+	pkt->cmd |= SHIFT_TBIT(toggle_t.rx);
 	ret = serialize_packet(pkt, buf);
 //	down_interruptible(&transaction);
 	if (kfifo_put(fifo, buf, ret) < ret) {
@@ -167,13 +167,13 @@ ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t si
 		return -EFAULT;
 	}
 
-	if((pkt.cmd & ~TOGGLE_BITMASK) == DRBCC_ACK || (pkt.cmd & ~TOGGLE_BITMASK) == DRBCC_SYNC_ANSWER) {
+	if(CMD_NO_TBIT(pkt.cmd) == DRBCC_ACK || CMD_NO_TBIT(pkt.cmd) == DRBCC_SYNC_ANSWER) {
 		DBG("Received ACK message.");
-		TOGGLE_BIT(toggle_t.rx);
+		toggle_t.rx = !toggle_t.rx;
 		return size;
 	}
 	
-	if((pkt.cmd & ~TOGGLE_BITMASK) == DRBCC_SYNC) {
+	if(CMD_NO_TBIT(pkt.cmd) == DRBCC_SYNC) {
 		DBG("Received SYNC message.");
 		if (kfifo_put(fifo, create_ack_buf(1, buf), ACK_LEN) < ACK_LEN) {
 			ERR("Putting ACK to fifo failed.");
@@ -184,11 +184,12 @@ ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t si
 		return size;
 	}
 
-	if(((pkt.cmd & ~TOGGLE_BITMASK) != DRBCC_SYNC) && (pkt.cmd & TOGGLE_BITMASK) != TOGGLE_SHIFT(toggle_t.tx)) {
+	if((CMD_NO_TBIT(pkt.cmd) != DRBCC_SYNC) && CMD_TBIT(pkt.cmd) != SHIFT_TBIT(toggle_t.tx)) {
 		ERR("Packet with wrong toggle bit received, putting fake ACK into fifo.");
-		if (kfifo_put(fifo, create_ack_buf(TOGGLE_SHIFT(toggle_t.tx), buf), ACK_LEN) < ACK_LEN) {
+		if (kfifo_put(fifo, create_ack_buf(SHIFT_TBIT(!toggle_t.tx), buf), ACK_LEN) < ACK_LEN) {
 			ERR("Putting ACK to fifo failed.");
-			return -EFAULT;
+			return size+2;
+//			return -EFAULT;	// FIXME: or should I still return the size?
 		}
 /*		if (kfifo_put(fifo, create_sync_buf(buf), SYNC_LEN) < SYNC_LEN) {
 			ERR("Putting sync message to fifo failed.");
@@ -205,8 +206,7 @@ ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t si
 	DBGF("Copied buf (%d elements): cmd = 0x%x, data:", size, pkt.cmd);
 	PRINTKN(pkt.data, pkt.payloadlen);
 
-	/*  */
-	pkt.cmd = (pkt.cmd & ~TOGGLE_BITMASK);
+	CMD_DEL_TBIT((&pkt));	// FIXME!!!!
 	DBGF("raw wants to send packet with cmd %d (0x%x) and to receive packet with cmd %d (0x%x)", pkt.cmd, pkt.cmd, 
 		RSP_CMD(pkt.cmd), RSP_CMD(pkt.cmd));
 	if ((ret = transmit_packet(&pkt, RSP_CMD(pkt.cmd))) < 0) {
@@ -226,10 +226,10 @@ ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t si
 	}
 
 	DBGF("Put ACK packet into fifo. fifolen = %d", kfifo_len(fifo));
-	TOGGLE_BIT(toggle_t.tx);
+	toggle_t.tx = !toggle_t.tx;
 
 	if(pkt.cmd != DRBCC_CMD_ILLEGAL) {
-		pkt.cmd |= TOGGLE_SHIFT(toggle_t.rx);
+		pkt.cmd |= SHIFT_TBIT(toggle_t.rx);
 		ret = serialize_packet(&pkt, buf);
 		if (kfifo_put(fifo, buf, ret) < ret) {
 			ERR("Putting data to fifo failed.");

@@ -33,11 +33,18 @@
 #define BCC_TTY_FLIPBUF_SIZE	TTY_FLIPBUF_SIZE
 #define BCC_PKT_MIN_SIZE	5 	/* <DRBCC_START_CHAR> <DRBCC_CMD> [<DATA:1> .. <DATA:n>] <CRC_LO> <CRC_HI> <DRBCC_STOP_CHAR> */
 
-#define TOGGLEB(x) (x->cmd = (x->cmd & ~TOGGLE_BITMASK))
-#define TOGGLE_SHIFT(toggle) (toggle << 7)
-#define TOGGLE TOGGLE_SHIFT(toggle)
-#define TOGGLE_BIT(toggle) (toggle += 1)
-#define T(x)	(x & ~TOGGLE_SHIFT(1))
+// FIXME: will man wirklich auf pointer in einer struct in einem macro
+// zugreifen?
+#define CMD_DEL_TBIT(x) (x->cmd = (x->cmd & ~TOGGLE_BITMASK)) // remove toggle bit from cmd
+// #define TOGGLEB(x) (x->cmd = (x->cmd & ~TOGGLE_BITMASK))
+#define SHIFT_TBIT(toggle) (toggle << 7)	// for &ing with cmd
+// #define TOGGLE_SHIFT(toggle) (toggle << 7)
+// #define TOGGLE TOGGLE_SHIFT(toggle)
+// #define TOGGLE_BIT(toggle) (toggle += 1)
+#define CMD_NO_TBIT(x) (x & ~SHIFT_TBIT(1))	// can be 0x00 or 0x80
+// #define T(x)	(x & ~TOGGLE_SHIFT(1))
+#define SET_TBIT(pkt, toggle) (pkt->cmd = ((pkt->cmd & ~TOGGLE_BITMASK) | SHIFT_TBIT(toggle)) ) 
+#define CMD_TBIT(cmd) (cmd & TOGGLE_BITMASK)
 
 /**
 *  \struct	toggle

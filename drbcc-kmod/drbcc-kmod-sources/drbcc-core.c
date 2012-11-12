@@ -156,8 +156,10 @@ static int transmit_msg(void)
 	if (tty->driver && tty->driver->write) {
 		memset(tx_buff, 0, (sizeof(tx_buff)/sizeof(tx_buff[0])));	
 		
-		DBGF("toggle = %d, pkt: 0x%x\n", toggle_t.tx, (pkt->cmd & ~TOGGLE_BITMASK) | TOGGLE_SHIFT(toggle_t.tx));
-		pkt->cmd = ((pkt->cmd & ~TOGGLE_BITMASK) | TOGGLE_SHIFT(toggle_t.tx)); // FIXME: better macro or delete this comment
+		SET_TBIT(pkt, toggle_t.tx); 
+//		pkt->cmd = ((pkt->cmd & ~TOGGLE_BITMASK) | TOGGLE_SHIFT(toggle_t.tx)); // FIXME: better macro or delete this comment
+		DBGF("toggle = %d, pkt_cmd: 0x%x\n", toggle_t.tx, pkt->cmd);
+//		DBGF("toggle = %d, pkt: 0x%x\n", toggle_t.tx, (pkt->cmd & ~TOGGLE_BITMASK) | TOGGLE_SHIFT(toggle_t.tx));
 		
 		pkt_len = serialize_packet(pkt, tx_buff);
 	
@@ -191,23 +193,23 @@ static void transmit_ack(void)
 		DBGF("%s Transmitting ack through driver (toggle-bit: 0x%x).\n", BCC, toggle_t.rx);
 
 		if(toggle_t.rx) {
-			ret = tty->driver->write(tty, ACK_BUF_RX_0, 5);
-		} else {
 			ret = tty->driver->write(tty, ACK_BUF_RX_1, 5);
+		} else {
+			ret = tty->driver->write(tty, ACK_BUF_RX_0, 5);
 		}
 		DBGF("Driver returned: %d", ret);
 	} 
 }
 
 static int toggle_bit_save_rx(struct bcc_packet *pkt) {
-	if ((pkt->cmd & TOGGLE_BITMASK) == TOGGLE_SHIFT(toggle_t.rx)) {	
+	if (CMD_TBIT(pkt->cmd) == SHIFT_TBIT(toggle_t.rx)) {	
 		transmit_ack();
 		toggle_t.rx = !toggle_t.rx;
 		DBGF("New rx_toggle: 0x%x", toggle_t.rx);
 		return 0;	
 	} else {
 		DBGF("**** Err on toggle bit (Expected: 0x%x, received: 0x%x (pkt->cmd = 0x%x))!\n", 
-			TOGGLE_SHIFT(toggle_t.rx), (pkt->cmd & TOGGLE_BITMASK), pkt->cmd);
+			SHIFT_TBIT(toggle_t.rx), CMD_TBIT(pkt->cmd), pkt->cmd);
 		// FIXME: Hack Alert!!! non-atomic toggling
 		toggle_t.rx = !toggle_t.rx;
 		transmit_ack();
@@ -229,9 +231,9 @@ static void rx_worker_thread(struct work_struct *work)
 		printk(KERN_NOTICE "Pkt pointer was null, something went terribly wrong.\n");
 	}
 
-	if (l2_state == RQ_STD && T(pkt->cmd) == DRBCC_ACK) {
+	if (l2_state == RQ_STD && CMD_NO_TBIT(pkt->cmd) == DRBCC_ACK) {
 		DBG("*** l2_state = RQ_STD\n");
-		TOGGLEB(pkt);
+		CMD_DEL_TBIT(pkt);
 		DBGF("pkt->cmd: 0x%x", pkt->cmd);
 		_the_bcc.resp = pkt;
 		_the_bcc.resp->cmd = DRBCC_CMD_ILLEGAL; 
@@ -247,7 +249,7 @@ static void rx_worker_thread(struct work_struct *work)
 		return;
 	}
 
-	if (l2_state == RQ_STD_ANS && T(pkt->cmd) == DRBCC_ACK) {
+	if (l2_state == RQ_STD_ANS && CMD_NO_TBIT(pkt->cmd) == DRBCC_ACK) {
 		DBG("*** l2_state = RQ_STD_ANS\n");
 		toggle_t.tx = !toggle_t.tx;	
 		DBGF("new tx_toggle = %d\n", toggle_t.tx );
@@ -260,7 +262,7 @@ static void rx_worker_thread(struct work_struct *work)
 		if (toggle_bit_save_rx(pkt) < 0) {
 			goto freeptr;
 		} 
-		TOGGLEB(pkt);
+		CMD_DEL_TBIT(pkt);
 		_the_bcc.resp = pkt; 
 		pkt = NULL;
 		l2_state = NONE;
@@ -281,10 +283,10 @@ static void rx_worker_thread(struct work_struct *work)
 	} else {
 		DBG("Start async msg loop.");
 		for(i = 0; i < sizeof(async_cmd)/sizeof(char); i++) {
-			if (T(pkt->cmd) == async_cmd[i]) {
+			if (CMD_NO_TBIT(pkt->cmd) == async_cmd[i]) {
 				/* TODO: pass to /proc/something or similar, or log
 					in case nobody has registered for async messages */
-				TOGGLEB(pkt);
+				CMD_DEL_TBIT(pkt);
 				_the_bcc.async_callback(pkt);
 				DBGF("Received async msg: %d (0x%x)", pkt->cmd, pkt->cmd);
 				return;		// Callback Funktion kfree's memory
@@ -428,7 +430,7 @@ static int synchronize(void)
 	char l2_state_save = l2_state;
 
 	_the_bcc.curr = &((struct bcc_packet) { 
-		.cmd = DRBCC_SYNC | TOGGLE_SHIFT(1), 
+		.cmd = DRBCC_SYNC | SHIFT_TBIT(1), 
 		.payloadlen = 0 });
 
 	

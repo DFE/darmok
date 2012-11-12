@@ -162,7 +162,7 @@ unsigned char *create_ack_buf(uint8_t toggle, unsigned char *tx_buff)
 {
 	int ret;
 	struct bcc_packet pkt = {
-		.cmd = (DRBCC_ACK | (TOGGLE_SHIFT(toggle) & TOGGLE_BITMASK)),
+		.cmd = (DRBCC_ACK | (toggle & TOGGLE_BITMASK)),	// FIXME: Macro?
 	};
 	
 	DBGF("Toggle bit of ACK message: %d.", toggle);
@@ -185,7 +185,7 @@ EXPORT_SYMBOL(create_ack_buf);
 unsigned char *create_sync_buf(unsigned char *tx_buff)
 {
 	int ret;
-	struct bcc_packet pkt = { DRBCC_SYNC | TOGGLE_SHIFT(1) };
+	struct bcc_packet pkt = { DRBCC_SYNC | SHIFT_TBIT(1) };
 
 	DBG("Create synchronisation message in buffer.");
 
