@@ -1,0 +1,159 @@
+diff -Nur linux-2.6.24/arch/arm/Kconfig linux-2.6.24/arch/arm/Kconfig
+--- linux-2.6.24//arch/arm/Kconfig	2011-09-01 16:07:10.000000000 +0200
++++ linux-2.6.24//arch/arm/Kconfig	2011-09-01 11:23:14.000000000 +0200
+@@ -1078,6 +1078,8 @@
+ 
+ source "drivers/rtc/Kconfig"
+ 
++source "drivers/drbcc/Kconfig"
++
+ source "drivers/dma/Kconfig"
+ 
+ source "drivers/dca/Kconfig"
+diff -Nur linux-2.6.24//drivers/Makefile linux-2.6.24//drivers/Makefile
+--- linux-2.6.24//drivers/Makefile	2008-01-24 23:58:37.000000000 +0100
++++ linux-2.6.24//drivers/Makefile	2011-09-01 13:11:32.000000000 +0200
+@@ -61,6 +61,7 @@
+ obj-$(CONFIG_INPUT)		+= input/
+ obj-$(CONFIG_I2O)		+= message/
+ obj-$(CONFIG_RTC_LIB)		+= rtc/
++obj-$(CONFIG_DRBCC_ENABLE)	+= drbcc/
+ obj-y				+= i2c/
+ obj-$(CONFIG_W1)		+= w1/
+ obj-$(CONFIG_POWER_SUPPLY)	+= power/
+diff -Nur linux-2.6.24//drivers/drbcc/Kconfig linux-2.6.24//drivers/drbcc/Kconfig
+--- linux-2.6.24//drivers/drbcc/Kconfig	1970-01-01 01:00:00.000000000 +0100
++++ linux-2.6.24//drivers/drbcc/Kconfig	2011-09-01 11:21:18.000000000 +0200
+@@ -0,0 +1,23 @@
++menuconfig DRBCC_ENABLE
++	tristate "DRBCC driver protocol stack"
++	default y 
++#	depends on ?
++	help
++	  Say Y to enable the customized DResearch DRBCC
++	  driver set to communicate with 
++
++if DRBCC_ENABLE
++
++config DRBCC_RTC
++	tristate "Create RTC dev node communicating with BCTRL"
++	depends on DRBCC_ENABLE
++	help
++	  TODO
++
++config DRBCC_RAW
++	tristate "Create legacy interface for communication of drbcc cmd line tool to BCTRL"
++	depends on DRBCC_ENABLE
++	help
++	  TODO
++
++endif # DRBCC
+--- linux-2.6.24/drivers/char/tty_io.c	2011-08-30 15:59:43.000000000 +0200
++++ linux-2.6.24/drivers/char/tty_io.c	2008-01-24 23:58:37.000000000 +0100
+@@ -2050,12 +2050,38 @@
+ 	tty = alloc_tty_struct();
+ 	if(!tty)
+ 		goto fail_no_mem;
++
++	memset(tty, 0, sizeof(struct tty_struct));
++#ifdef CONFIG_DRBCC_ENABLE
++	if (!strcmp(driver->name, "ttyS") && ((idx + driver->name_base) == 0) && (driver->cdev.dev == MKDEV(4, 64))) {
++		printk(KERN_WARNING "####### N_BCC (%d) [drv_name = %s, name = %s, major = %d, min_start = %d] [ MAJ = %d, MIN = %d]\n", driver->cdev.dev, driver->driver_name, driver->name, 
++			driver->major, driver->minor_start, MAJOR(driver->cdev.dev), MINOR(driver->cdev.dev));
++		struct tty_ldisc * ld = tty_ldisc_get(N_BCC);
++		if(!ld) {
++			printk(KERN_WARNING "________Oh-oh! I dont't know N_BCC!\n");
++		} else {
++			printk(KERN_WARNING "________N_BCC attached to port!\n");
++		}
++		tty_ldisc_assign(tty, ld);
++	} else {
++		printk("####### N_TTY (%d) [drv_name = %s, name = %s, major = %d, min_start = %d] [ MAJ = %d, MIN = %d]\n", driver->cdev.dev, driver->driver_name, driver->name, 
++			driver->major, driver->minor_start, MAJOR(driver->cdev.dev), MINOR(driver->cdev.dev));
++		tty_ldisc_assign(tty, tty_ldisc_get(N_TTY));
++	}
++#else
++	printk("####### N_TTY (%d) [drv_name = %s, name = %s, major = %d, min_start = %d] [ MAJ = %d, MIN = %d]\n", driver->cdev.dev, driver->driver_name, driver->name, 
++			driver->major, driver->minor_start, MAJOR(driver->cdev.dev), MINOR(driver->cdev.dev));
++	tty_ldisc_assign(tty, tty_ldisc_get(N_TTY));
++#endif
++
+ 	initialize_tty_struct(tty);
++	printk("Initialized struct.\n");
+ 	tty->driver = driver;
+ 	tty->index = idx;
+ 	tty_line_name(driver, idx, tty->name);
++	printk("###### tty->name = %s", tty->name);
+ 
+-	if (driver->flags & TTY_DRIVER_DEVPTS_MEM) {
++       	if (driver->flags & TTY_DRIVER_DEVPTS_MEM) {
+ 		tp_loc = &tty->termios;
+ 		ltp_loc = &tty->termios_locked;
+ 	} else {
+@@ -2080,8 +2117,13 @@
+ 		o_tty = alloc_tty_struct();
+ 		if (!o_tty)
+ 			goto free_mem_out;
++		
++		memset(o_tty, 0, sizeof(struct tty_struct));
++		tty_ldisc_assign(o_tty, tty_ldisc_get(N_TTY));
+ 		initialize_tty_struct(o_tty);
+ 		o_tty->driver = driver->other;
++		printk(KERN_DEBUG "####### PTY (%d) [drv_name = %s, name = %s, major = %d, min_start = %d] [ MAJ = %d, MIN = %d]\n", driver->cdev.dev, driver->driver_name, driver->name, 
++			driver->major, driver->minor_start, MAJOR(driver->cdev.dev), MINOR(driver->cdev.dev));
+ 		o_tty->index = idx;
+ 		tty_line_name(driver->other, idx, o_tty->name);
+ 
+@@ -2156,11 +2198,13 @@
+ 
+ 	if (tty->ldisc.open) {
+ 		retval = (tty->ldisc.open)(tty);
++		printk(KERN_DEBUG "[[ 1 ]] retval = %d\n", retval);
+ 		if (retval)
+ 			goto release_mem_out;
+ 	}
+ 	if (o_tty && o_tty->ldisc.open) {
+ 		retval = (o_tty->ldisc.open)(o_tty);
++		printk(KERN_DEBUG "[[ 2 ]] retval = %d\n", retval);
+ 		if (retval) {
+ 			if (tty->ldisc.close)
+ 				(tty->ldisc.close)(tty);
+@@ -2290,8 +2336,10 @@
+ {
+ 	struct tty_driver *driver = tty->driver;
+ 
+-	if (tty->link)
++	if (tty->link) {
++		printk(KERN_DEBUG "#### TTY has partner: %s (%d)\n",tty->link->name, idx);
+ 		release_one_tty(tty->link, idx);
++	}
+ 	release_one_tty(tty, idx);
+ 	module_put(driver->owner);
+ }
+@@ -3617,9 +3665,13 @@
+ 	char *char_buf;
+ 	unsigned char *flag_buf;
+ 
++	printk(KERN_DEBUG "Flush to ldisc called: ");
+ 	disc = tty_ldisc_ref(tty);
+-	if (disc == NULL)	/*  !TTY_LDISC */
++	if (disc == NULL) {	/*  !TTY_LDISC */
++		printk("No ldisc\n");
+ 		return;
++	}
++	printk(KERN_DEBUG "discname = %s (num = %d)\n", (disc->name == NULL)?"NULL":disc->name, disc->num);
+ 
+ 	spin_lock_irqsave(&tty->buf.lock, flags);
+ 	set_bit(TTY_FLUSHING, &tty->flags);	/* So we know a flush is running */
+@@ -3712,9 +3774,9 @@
+ 
+ static void initialize_tty_struct(struct tty_struct *tty)
+ {
+-	memset(tty, 0, sizeof(struct tty_struct));
++//	memset(tty, 0, sizeof(struct tty_struct));
+ 	tty->magic = TTY_MAGIC;
+-	tty_ldisc_assign(tty, tty_ldisc_get(N_TTY));
++//	tty_ldisc_assign(tty, tty_ldisc_get(N_TTY));
+ 	tty->session = NULL;
+ 	tty->pgrp = NULL;
+ 	tty->overrun_time = jiffies;

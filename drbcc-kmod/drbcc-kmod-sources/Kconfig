@@ -1,0 +1,24 @@
+menuconfig DRBCC_ENABLE
+	tristate "DRBCC driver protocol stack"
+	default y 
+#	depends on ?
+	help
+	  Say Y to enable the customized DResearch DRBCC
+	  driver set to communicate with the board controller. 
+
+if DRBCC_ENABLE
+
+config DRBCC_RTC
+	tristate "Create RTC dev node communicating with BCTRL"
+	depends on DRBCC_ENABLE
+	help
+	  Use the BCTRL to retrieve rtc. A new device node will be created: /dev/drbcc-rtc. 
+
+config DRBCC_RAW
+	tristate "Create legacy interface for communication of drbcc cmd line tool to BCTRL"
+	depends on DRBCC_ENABLE
+	help
+	  Use kernel driver set to communicate with the BCTRL. A new device node will be created: /dev/drbcc-raw.
+	  This should be used for the communication with the drbcc command line tool instead of /dev/ttyS0.
+
+endif # DRBCC
