@@ -1,15 +1,17 @@
-From 5213012135d96474c2b18f9bb75685da11022c70 Mon Sep 17 00:00:00 2001
-From: Christina Quast <chrysh.ng+github@gmail.com>
-Date: Mon, 26 Nov 2012 22:01:31 +0100
-Subject: [PATCH] Darmok: menu config and Makefile entries
+From da4238fcbd14e73d8c62de79f56608d9f58f9917 Mon Sep 17 00:00:00 2001
+From: Mario Schuknecht <schuknecht@dresearch-fe.de>
+Date: Tue, 4 Dec 2012 11:35:16 +0100
+Subject: [PATCH] Patching kernel 2.6.37
 
 Signed-off-by: Christina Quast <chrysh.ng+github@gmail.com>
 ---
- drivers/Kconfig        |    2 ++
- drivers/Makefile       |    1 +
- drivers/darmok/Kconfig |   25 +++++++++++++++++++++++++
- 3 files changed, 28 insertions(+)
- create mode 100644 drivers/darmok/Kconfig
+ drivers/Kconfig         |    2 ++
+ drivers/Makefile        |    1 +
+ drivers/tty/tty_io.c    |   15 ++++++++++++++-
+ drivers/tty/tty_ldisc.c |    8 ++++++--
+ fs/char_dev.c           |    3 ++-
+ include/linux/tty.h     |    3 ++-
+ 6 files changed, 27 insertions(+), 5 deletions(-)
 
 diff --git a/drivers/Kconfig b/drivers/Kconfig
 index 72b9c51..b896c39 100644
@@ -25,7 +27,7 @@ index 72b9c51..b896c39 100644
  
  source "drivers/dca/Kconfig"
 diff --git a/drivers/Makefile b/drivers/Makefile
-index bbaca5c..98d40ef 100644
+index bbaca5c..7fefb23 100644
 --- a/drivers/Makefile
 +++ b/drivers/Makefile
 @@ -74,6 +74,7 @@ obj-$(CONFIG_GAMEPORT)		+= input/gameport/
@@ -36,37 +38,94 @@ index bbaca5c..98d40ef 100644
  obj-y				+= i2c/ media/
  obj-$(CONFIG_PPS)		+= pps/
  obj-$(CONFIG_PTP_1588_CLOCK)	+= ptp/
-diff --git a/drivers/darmok/Kconfig b/drivers/darmok/Kconfig
-new file mode 100644
-index 0000000..0e64189
---- /dev/null
-+++ b/drivers/darmok/Kconfig
-@@ -0,0 +1,25 @@
-+menuconfig DARMOK_CORE
-+	tristate "DARMOK driver protocol stack"
-+	default m 
-+	help
-+	  Say Y to enable the customized DResearch DARMOK
-+	  driver set which allows communication with the 
-+	  onboard microcontroller
+diff --git a/drivers/tty/tty_io.c b/drivers/tty/tty_io.c
+index 35480dd..ae4a215 100644
+--- a/drivers/tty/tty_io.c
++++ b/drivers/tty/tty_io.c
+@@ -2852,7 +2852,20 @@ void initialize_tty_struct(struct tty_struct *tty,
+ 	memset(tty, 0, sizeof(struct tty_struct));
+ 	kref_init(&tty->kref);
+ 	tty->magic = TTY_MAGIC;
+-	tty_ldisc_init(tty);
++//	tty_ldisc_init(tty);
++#ifdef CONFIG_DARMOK_CORE
++//	printk("TTY init: %s\n", driver->name);
++	if (!strcmp(driver->name, "ttyS") && ((idx + driver->name_base) == 0) && (driver->cdev.dev == MKDEV(4, 64))) {
++		printk(KERN_DEBUG "Line Disc N_BCC (%d) [drv_name = %s, name = %s, major = %d, min_start = %d] [ MAJ = %d, MIN = %d]\n", 
++				driver->cdev.dev, driver->driver_name, driver->name, driver->major, driver->minor_start, MAJOR(driver->cdev.dev), MINOR(driver->cdev.dev));
++		tty_ldisc_init(tty, N_BCC);                       
++	} else {                                                                    
++		tty_ldisc_init(tty, N_TTY);                       
++	}                                                                           
++#else                                                                               
++	tty_ldisc_init(tty, N_TTY);	
++#endif   	
 +
-+if DARMOK_CORE
-+
-+config DARMOK_RTC
-+	tristate "RTC dev node communicating with BCTRL"
-+	depends on DARMOK_CORE
-+	help
-+	  Driver for communication with Hardware RTC connected 
-+	  to the DARMOK board controller over a serial interface
-+
-+config DARMOK_RAW
-+	tristate "Legacy interface between the drbcc cmd line tool and BCTRL"
-+	depends on DARMOK_CORE
-+	help
-+	  Legacy driver as an interface between the old command line drbcc tool and 
-+	  the serial conntect microcontroller
-+
-+endif # DARMOK_CORE
+ 	tty->session = NULL;
+ 	tty->pgrp = NULL;
+ 	tty->overrun_time = jiffies;
+diff --git a/drivers/tty/tty_ldisc.c b/drivers/tty/tty_ldisc.c
+index 4214d58..d3094cb 100644
+--- a/drivers/tty/tty_ldisc.c
++++ b/drivers/tty/tty_ldisc.c
+@@ -937,9 +937,13 @@ void tty_ldisc_release(struct tty_struct *tty, struct tty_struct *o_tty)
+  *	the tty structure is not completely set up when this call is made.
+  */
+ 
+-void tty_ldisc_init(struct tty_struct *tty)
++void tty_ldisc_init(struct tty_struct *tty, int disc)
+ {
+-	struct tty_ldisc *ld = tty_ldisc_get(N_TTY);
++	struct tty_ldisc *ld;
++	if (disc < N_TTY || disc >= NR_LDISCS)
++		panic("tty_ldisc: Unknown Ldisc");
++		
++	ld = tty_ldisc_get(disc);	
+ 	if (IS_ERR(ld))
+ 		panic("n_tty: init_tty");
+ 	tty_ldisc_assign(tty, ld);
+diff --git a/fs/char_dev.c b/fs/char_dev.c
+index e5b9df9..ddc0d36 100644
+--- a/fs/char_dev.c
++++ b/fs/char_dev.c
+@@ -366,7 +366,7 @@ void cdev_put(struct cdev *p)
+ /*
+  * Called every time a character special file is opened
+  */
+-static int chrdev_open(struct inode *inode, struct file *filp)
++int chrdev_open(struct inode *inode, struct file *filp)
+ {
+ 	struct cdev *p;
+ 	struct cdev *new = NULL;
+@@ -579,6 +579,7 @@ EXPORT_SYMBOL(register_chrdev_region);
+ EXPORT_SYMBOL(unregister_chrdev_region);
+ EXPORT_SYMBOL(alloc_chrdev_region);
+ EXPORT_SYMBOL(cdev_init);
++EXPORT_SYMBOL(chrdev_open);
+ EXPORT_SYMBOL(cdev_alloc);
+ EXPORT_SYMBOL(cdev_del);
+ EXPORT_SYMBOL(cdev_add);
+diff --git a/include/linux/tty.h b/include/linux/tty.h
+index 54e4eaa..4222af5 100644
+--- a/include/linux/tty.h
++++ b/include/linux/tty.h
+@@ -50,6 +50,7 @@
+ #define N_CAIF		20      /* CAIF protocol for talking to modems */
+ #define N_GSM0710	21	/* GSM 0710 Mux */
+ #define N_TI_WL		22	/* for TI's WL BT, FM, GPS combo chips */
++#define N_BCC		23	/* for serial board controller communication */
+ 
+ /*
+  * This character is the same as _POSIX_VDISABLE: it cannot be used as
+@@ -523,7 +524,7 @@ extern int tty_unregister_ldisc(int disc);
+ extern int tty_set_ldisc(struct tty_struct *tty, int ldisc);
+ extern int tty_ldisc_setup(struct tty_struct *tty, struct tty_struct *o_tty);
+ extern void tty_ldisc_release(struct tty_struct *tty, struct tty_struct *o_tty);
+-extern void tty_ldisc_init(struct tty_struct *tty);
++extern void tty_ldisc_init(struct tty_struct *tty, int disc);
+ extern void tty_ldisc_begin(void);
+ /* This last one is just for the tty layer internals and shouldn't be used elsewhere */
+ extern void tty_ldisc_enable(struct tty_struct *tty);
 -- 
 1.7.9.5
 
