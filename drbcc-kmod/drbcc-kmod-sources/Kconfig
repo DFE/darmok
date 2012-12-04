@@ -1,24 +1,25 @@
-menuconfig DRBCC_ENABLE
-	tristate "DRBCC driver protocol stack"
-	default y 
-#	depends on ?
+menuconfig DARMOK_CORE
+	tristate "DARMOK driver protocol stack"
+	default m 
 	help
-	  Say Y to enable the customized DResearch DRBCC
-	  driver set to communicate with the board controller. 
+	  Say Y to enable the customized DResearch DARMOK
+	  driver set which allows communication with the 
+	  onboard microcontroller
 
-if DRBCC_ENABLE
+if DARMOK_CORE
 
-config DRBCC_RTC
-	tristate "Create RTC dev node communicating with BCTRL"
-	depends on DRBCC_ENABLE
+config DARMOK_RTC
+	tristate "RTC dev node communicating with BCTRL"
+	depends on DARMOK_CORE
 	help
-	  Use the BCTRL to retrieve rtc. A new device node will be created: /dev/drbcc-rtc. 
+	  Driver for communication with Hardware RTC connected 
+	  to the DARMOK board controller over a serial interface
 
-config DRBCC_RAW
-	tristate "Create legacy interface for communication of drbcc cmd line tool to BCTRL"
-	depends on DRBCC_ENABLE
+config DARMOK_RAW
+	tristate "Legacy interface between the drbcc cmd line tool and BCTRL"
+	depends on DARMOK_CORE
 	help
-	  Use kernel driver set to communicate with the BCTRL. A new device node will be created: /dev/drbcc-raw.
-	  This should be used for the communication with the drbcc command line tool instead of /dev/ttyS0.
+	  Legacy driver as an interface between the old command line drbcc tool and 
+	  the serial conntect microcontroller
 
-endif # DRBCC
+endif # DARMOK_CORE

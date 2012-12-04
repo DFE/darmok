@@ -14,12 +14,14 @@
 #include <linux/tty_driver.h>
 #include <linux/tty_ldisc.h>
 #include <linux/delay.h>
-#include <linux/slab_def.h>
+#include <linux/slab.h>
 #include <linux/cdev.h>
 #include <linux/device.h>
 #include <linux/completion.h>
 #include <linux/workqueue.h>
-#include <asm/semaphore.h>
+#include <linux/semaphore.h>
+#include <linux/wait.h>
+#include <linux/sched.h>
 
 /* Remove when not needed for dummy write function anymore, 
 * since communication to userspace via /dev/ttyS0 is prohibited 
@@ -39,6 +41,7 @@
 #define DEBUG_DRBCC
 #define DEBUG
 
+// TODO: maybe decrease count when closing the ldisc?
 extern int chrdev_open(struct inode * inode, struct file * filp);
 struct inode ino; 
 struct file filp;
@@ -86,9 +89,9 @@ static struct bcc_struct _the_bcc = {
 	.response.count = 0, */
 };
 
-static unsigned char tx_buff[MSG_MAX_BUFF] = { 0 };
+static unsigned char tx_buff[MSG_MAX_BUF] = { 0 };
 static uint8_t resp_cmd;
-DECLARE_MUTEX(sem_access);
+DEFINE_SEMAPHORE(sem_access);
 static uint8_t transaction_ready = 0; 
 DECLARE_WAIT_QUEUE_HEAD(wq);
 
@@ -139,8 +142,8 @@ static void check_unthrottle(struct tty_struct * tty)
 {
 	if (tty->count &&
 	    test_and_clear_bit(TTY_THROTTLED, &tty->flags) && 
-	    tty->driver->unthrottle)
-		tty->driver->unthrottle(tty);
+	    tty->driver->ops->unthrottle)
+		tty->driver->ops->unthrottle(tty);
 }
 #endif
 /*
@@ -153,7 +156,7 @@ static int transmit_msg(void)
 	struct tty_struct *tty = _the_bcc.tty;
 	struct bcc_packet *pkt = &_the_bcc.temp_tx;
 
-	if (tty->driver && tty->driver->write) {
+	if (tty->driver && tty->driver->ops->write) {
 		memset(tx_buff, 0, (sizeof(tx_buff)/sizeof(tx_buff[0])));	
 		
 		SET_TBIT(pkt, toggle_t.tx); 
@@ -165,11 +168,11 @@ static int transmit_msg(void)
 	
 		DBGF("%s Transmitting packet (cmd = 0x%x) through driver.\n", BCC, *(tx_buff+1));
 		PRINTKN(tx_buff, 10);
-		ret = tty->driver->write(tty, tx_buff, pkt_len);
+		ret = tty->driver->ops->write(tty, tx_buff, pkt_len);
 
 // TODO: Do I need this?
-		if (ttyp->driver->flush_chars)
-			ttyp->driver->flush_chars(ttyp);
+		if (ttyp->driver->ops->flush_chars)
+			ttyp->driver->ops->flush_chars(ttyp);
 
 		DBGF("Driver returned: %d", ret);
 	} else {
@@ -189,13 +192,13 @@ static void transmit_ack(void)
 	int ret = 0;
 	struct tty_struct *tty = _the_bcc.tty;
 	
-	if (tty->driver && tty->driver->write) {
+	if (tty->driver && tty->driver->ops->write) {
 		DBGF("%s Transmitting ack through driver (toggle-bit: 0x%x).\n", BCC, toggle_t.rx);
 
 		if(toggle_t.rx) {
-			ret = tty->driver->write(tty, ACK_BUF_RX_1, 5);
+			ret = tty->driver->ops->write(tty, ACK_BUF_RX_1, 5);
 		} else {
-			ret = tty->driver->write(tty, ACK_BUF_RX_0, 5);
+			ret = tty->driver->ops->write(tty, ACK_BUF_RX_0, 5);
 		}
 		DBGF("Driver returned: %d", ret);
 	} 
@@ -373,7 +376,7 @@ static void receive_msg(unsigned char *buf, uint8_t len)
 */
 static void bcc_receive_buf(struct tty_struct *tty, const unsigned char *cp, char *fp, int count) 
 {
-	unsigned char 			newbuf[MSG_MAX_BUFF];
+	unsigned char 			newbuf[MSG_MAX_BUF];
 	uint8_t				i, j;
 	const unsigned char 		*p;
 	char				*f, flags = TTY_NORMAL;
@@ -381,13 +384,13 @@ static void bcc_receive_buf(struct tty_struct *tty, const unsigned char *cp, cha
 	DBGF("Received %d bytes from driver: \n", count);
 	PRINTKN(cp, count);
 
-	if (count > MSG_MAX_BUFF) {
+	if (count > MSG_MAX_BUF) {
 		ERR("Received more bytes from serial driver than I can handle.");
 		return;
 	}
 
 //	tty->receive_room -= count; 
-	memset(newbuf, 0, MSG_MAX_BUFF);
+	memset(newbuf, 0, MSG_MAX_BUF);
 
 // FIXME: put into separate function?: 
 	for(j = 0, i = count, p = cp, f = fp; i; i--, p++) {
@@ -412,8 +415,8 @@ static void bcc_receive_buf(struct tty_struct *tty, const unsigned char *cp, cha
 // TODO: remove all PRINTKNs
 #ifdef DRIVER_THROTTLING
 	if (!test_and_set_bit(TTY_THROTTLED, &tty->flags) &&
-	    tty->driver->throttle)
-		tty->driver->throttle(tty);
+	    tty->driver->ops->throttle)
+		tty->driver->ops->throttle(tty);
 #endif
 	receive_msg(newbuf, j);
 
@@ -528,7 +531,10 @@ int transmit_packet(struct bcc_packet * pkt, uint8_t resp_cmd)
 		return -EAGAIN;
 	}
 
-	down_interruptible(&sem_access);
+	ret = down_interruptible(&sem_access);
+	if (ret)	
+		return ret;
+
 	_the_bcc.curr = pkt;
 
 	if (resp_cmd != DRBCC_CMD_ILLEGAL) {
@@ -655,7 +661,7 @@ static int bcc_open (struct tty_struct *tty)
 	
 	_the_bcc.opened++;	
 
-	tty->receive_room = MSG_MAX_BUFF;
+	tty->receive_room = MSG_MAX_BUF;
 	
 	/* Every entry point will now have access to our private data structure */
 	tty->disc_data = &_the_bcc;
@@ -665,10 +671,10 @@ static int bcc_open (struct tty_struct *tty)
 
 	if (tty->driver) {
 		DBG("+++++++ driver set in tty struct. ");
-		if (!tty->driver->write) {
-			DBG("But no driver->write function. ");
+		if (!tty->driver->ops->write) {
+			DBG("But no driver->ops->write function. ");
 		} else {
-			DBGF(" driver->write: %p ",  tty->driver->write);
+			DBGF(" driver->ops->write: %p ",  tty->driver->ops->write);
 		}
 	} else {
 		DBG("++++++++ No driver set in tty struct. ");
@@ -678,10 +684,10 @@ static int bcc_open (struct tty_struct *tty)
 	if(tty->driver == NULL) {
 		DBG("No driver set in tty");
 	} else {
-		DBGF("driver_name: %s, name: %s", tty->driver->driver_name, tty->driver->name);
+		DBGF("driver_name: %s, name: %s", tty->driver->ops->driver_name, tty->driver->ops->name);
 		DBGF("(type == TTY_DRIVER_TYPE_SERIAL) ? %s , (subtype == SERIAL_TYPE_NORMAL) ? %s", 
-			(tty->driver->type == TTY_DRIVER_TYPE_SERIAL)?"YES":"NO", 
-			(tty->driver->subtype == SERIAL_TYPE_NORMAL)?"YES":"NO");
+			(tty->driver->ops->type == TTY_DRIVER_TYPE_SERIAL)?"YES":"NO", 
+			(tty->driver->ops->subtype == SERIAL_TYPE_NORMAL)?"YES":"NO");
 	}
 
 /*	mutex_lock(&tty->termios_mutex);
@@ -746,7 +752,7 @@ int bcc_ioctl(struct tty_struct* tty, struct file * file, unsigned int cmd, unsi
 	return tty_mode_ioctl(_the_bcc.tty, file, cmd, arg);
 }
 
-static struct tty_ldisc bcc_ldisc = {
+static struct tty_ldisc_ops bcc_ldisc = {
 	.magic 		= BCC_MAGIC,
 	.name 		= "bcc_ldisc",
 	
@@ -792,7 +798,7 @@ int add_device_entry(struct cdev *cdev, int minor, char *dev_name) {
 	}
 
 	/* Register device with it's name so that kernel can create dev entry */
-	device_create(drbcc_class, NULL, devno, dev_name);
+	device_create(drbcc_class, NULL, devno, NULL, dev_name);
 
 	return ret;	
 }

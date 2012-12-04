@@ -15,7 +15,7 @@
 #ifdef __KERNEL__
 #include <linux/types.h>
 #include <linux/cdev.h>
-#include <asm/semaphore.h>
+//#include <asm/semaphore.h>
 #include <linux/workqueue.h>
 #endif /* __KERNEL__ */
 
@@ -23,7 +23,7 @@
 #include "drbcc_ll.h"
 
 #define MSG_MAX_LEN 	140
-#define MSG_MAX_BUFF 	2*MSG_MAX_LEN
+#define MSG_MAX_BUF 	2*MSG_MAX_LEN
 #define MSG_MIN_LEN	5
 #define SYNC_LEN 	MSG_MIN_LEN
 #define ACK_LEN 	MSG_MIN_LEN
@@ -137,7 +137,7 @@ struct bcc_packet {
 	struct work_struct	work;
 };
 
-int serialize_packet(struct bcc_packet * pkt, unsigned char tx_buff[MSG_MAX_BUFF]);
+int serialize_packet(struct bcc_packet * pkt, unsigned char tx_buff[MSG_MAX_BUF]);
 int deserialize_packet(const unsigned char *cp, struct bcc_packet *pkt, int size);
 
 unsigned char *create_ack_buf(uint8_t toggle, unsigned char *tx_buff);
