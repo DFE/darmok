@@ -224,7 +224,7 @@ int serialize_packet(struct bcc_packet * pkt, unsigned char tx_buff[])
 
 	/* Notice: idx will be changed through the function bcc_esc_byte */
 	/* FIXME: 140-5: Because there might be two escape seq for crc hi and crc lo */
-	for(; idx < MSG_MAX_BUFF-5 && j < pkt->payloadlen; j++) {
+	for(; idx < MSG_MAX_BUF-5 && j < pkt->payloadlen; j++) {
 	                idx = bcc_esc_byte(tx_buff, pkt->data[j], idx);
                         crc = libdrbcc_crc_ccitt_update(crc, pkt->data[j]);
 	}

@@ -47,7 +47,7 @@ typedef enum { SEC, MIN, HOUR, DAY, DATE, MONTH, YEAR, EPOCH } PKTF_t;	/* Field 
 int get_rtc_time(struct device *dev, struct rtc_time *rtc_tm)
 {
 	int ret = 0;
-	DECLARE_MUTEX(sem);
+	DEFINE_SEMAPHORE(sem);
 	struct bcc_packet pkt = { 
 		.cmd 		=  DRBCC_REQ_RTC_READ,
 		.payloadlen	= 0,
@@ -70,13 +70,13 @@ int get_rtc_time(struct device *dev, struct rtc_time *rtc_tm)
 		return -EFAULT;
 	}
 
-	rtc_tm->tm_sec =  BCD_TO_BIN(pkt.data[SEC]);
-	rtc_tm->tm_min  = BCD_TO_BIN(pkt.data[MIN]);
-	rtc_tm->tm_hour = BCD_TO_BIN(pkt.data[HOUR]);
-	rtc_tm->tm_wday = BCD_TO_BIN(pkt.data[DAY]);
-	rtc_tm->tm_mday = BCD_TO_BIN(pkt.data[DATE]);
-	rtc_tm->tm_mon = BCD_TO_BIN(pkt.data[MONTH]) - 1; 
-	rtc_tm->tm_year = BCD_TO_BIN(pkt.data[YEAR]) + 2000 - 1900;  
+	rtc_tm->tm_sec =  bcd2bin(pkt.data[SEC]);
+	rtc_tm->tm_min  = bcd2bin(pkt.data[MIN]);
+	rtc_tm->tm_hour = bcd2bin(pkt.data[HOUR]);
+	rtc_tm->tm_wday = bcd2bin(pkt.data[DAY]);
+	rtc_tm->tm_mday = bcd2bin(pkt.data[DATE]);
+	rtc_tm->tm_mon = bcd2bin(pkt.data[MONTH]) - 1; 
+	rtc_tm->tm_year = bcd2bin(pkt.data[YEAR]) + 2000 - 1900;  
 /* TODO: epoch?? */
 
 	DBGF("______%d %d %d %d %d %d______", rtc_tm->tm_sec, rtc_tm->tm_min, rtc_tm->tm_hour,
@@ -93,7 +93,7 @@ int get_rtc_time(struct device *dev, struct rtc_time *rtc_tm)
 int set_rtc_time(struct device *dev, struct rtc_time *rtc_tm)
 {
 	int month, year, ret = 0;
-	DECLARE_MUTEX(sem);
+	DEFINE_SEMAPHORE(sem);
 	struct bcc_packet pkt = { 
 		.cmd 		=  DRBCC_REQ_RTC_SET,
 		.payloadlen	= 0,
@@ -102,17 +102,17 @@ int set_rtc_time(struct device *dev, struct rtc_time *rtc_tm)
 
 	DBG("Set RTC time through mircocontroller.");	
 
-	pkt.data[SEC] = BIN_TO_BCD(rtc_tm->tm_sec);
-	pkt.data[MIN] = BIN_TO_BCD(rtc_tm->tm_min);
-	pkt.data[HOUR] = BIN_TO_BCD(rtc_tm->tm_hour);
-	pkt.data[DAY] = BIN_TO_BCD(rtc_tm->tm_wday);
-	pkt.data[DATE] = BIN_TO_BCD(rtc_tm->tm_mday);
+	pkt.data[SEC] = bin2bcd(rtc_tm->tm_sec);
+	pkt.data[MIN] = bin2bcd(rtc_tm->tm_min);
+	pkt.data[HOUR] = bin2bcd(rtc_tm->tm_hour);
+	pkt.data[DAY] = bin2bcd(rtc_tm->tm_wday);
+	pkt.data[DATE] = bin2bcd(rtc_tm->tm_mday);
 	
 	month = rtc_tm->tm_mon+1;
-	pkt.data[MONTH] = BIN_TO_BCD(month);
+	pkt.data[MONTH] = bin2bcd(month);
 	
 	year = 	rtc_tm->tm_year + 1900 - 2000;
-	pkt.data[YEAR] = BIN_TO_BCD(year);
+	pkt.data[YEAR] = bin2bcd(year);
 
 /* TODO: remove second parameter in transmit_packet function */
 	if ((ret = transmit_packet(&pkt, RSP_CMD(pkt.cmd))) < 0) {

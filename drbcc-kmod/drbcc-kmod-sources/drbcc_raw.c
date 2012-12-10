@@ -15,6 +15,8 @@
 #include <asm/uaccess.h>
 #include <asm/string.h>
 #include <asm/types.h>
+#include <linux/semaphore.h>
+#include <linux/slab.h>
 
 #include "drbcc.h"
 
@@ -24,8 +26,8 @@
 #define READ_BUF	4096
 
 static struct cdev cdev;
-static struct kfifo *fifo;
-DECLARE_MUTEX(transaction);
+static struct kfifo fifo;
+DEFINE_SPINLOCK(spin);
 
 static struct toggle toggle_t = {
 	.rx = 0,
@@ -37,17 +39,15 @@ static struct toggle toggle_t = {
 */
 void drbcc_rcv_msg_async(struct bcc_packet *pkt)
 {
-	unsigned char buf[MSG_MAX_BUFF];
+	unsigned char buf[MSG_MAX_BUF];
 	int ret;
  	
 	pkt->cmd |= SHIFT_TBIT(toggle_t.rx);
 	ret = serialize_packet(pkt, buf);
-//	down_interruptible(&transaction);
-	if (kfifo_put(fifo, buf, ret) < ret) {
+	if (kfifo_in_spinlocked(&fifo, buf, ret, &spin) < ret) {
 		ERR("Putting data to fifo failed.");
 	}
-//	up(&transaction);
-	DBGF("Put asynchronous packet with cmd = 0x%x into fifo. fifolen = %d", pkt->cmd, kfifo_len(fifo));
+	DBGF("Put asynchronous packet with cmd = 0x%x into fifo. fifolen = %d", pkt->cmd, kfifo_len(&fifo));
 
 	kfree(pkt);
 }
@@ -91,24 +91,20 @@ ssize_t drbcc_raw_read(struct file * file, char __user * user, size_t num1, loff
 	size_t ret = 0;
 	size_t count = 0;
 	unsigned int fifo_len;
-	unsigned char local_buf[READ_BUF];
+	unsigned char local_buf[MSG_MAX_BUF];
 
-	if(!fifo) {
-		DBG("Fifo buffer could not be retrieved.");
-	}
-
-	if((fifo_len = kfifo_len(fifo)) <= 0) {
+	if((fifo_len = kfifo_len(&fifo)) <= 0) {
 		//DBGF("Error No. %d: No bytes available in fifo.", fifo_len);
 		goto out;
 	}
 
 	DBGF("HydraIP DRBCC driver: %s.\n", __FUNCTION__);
 	//PRINTKN(fifo->buffer, fifo->size);
-	DBGF("fifo contains %d elements in its buffer", kfifo_len(fifo));
+	DBGF("fifo contains %d elements in its buffer", kfifo_len(&fifo));
 
 	count = min(num1, fifo_len);
 
-	if ((ret = kfifo_get(fifo, local_buf, count)) < 0) {
+	if ((ret = kfifo_out_spinlocked(&fifo, local_buf, count, &spin)) < 0) {
 		ERR("Failed reading bytes from fifo buffer.");
 		ret = -EFAULT;
 		goto out;
@@ -122,7 +118,7 @@ ssize_t drbcc_raw_read(struct file * file, char __user * user, size_t num1, loff
 		goto out;
 	}	
 	ret = count;
-	kfifo_reset(fifo);
+	kfifo_reset(&fifo);
 	
   out:
 	return ret;
@@ -141,15 +137,11 @@ ssize_t drbcc_raw_read(struct file * file, char __user * user, size_t num1, loff
 ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t size, loff_t * loff) {
 	struct bcc_packet pkt = { 0 };
 	int ret = 0;
-	unsigned char buf[MSG_MAX_BUFF];
+	unsigned char buf[MSG_MAX_BUF];
  	
-	if(!fifo) {
-		DBG("Fifo buffer could not be retrieved.");
-	}
-
 	DBGF("HydraIP DRBCC driver: %s.\n", __FUNCTION__);
 
-	if ( size > MSG_MAX_BUFF ) {
+	if ( size > MSG_MAX_BUF ) {
 		ERR(BRAW "Can't send message that is bigger than maximal message size.");	
 		return -EFAULT;
 	}
@@ -175,7 +167,7 @@ ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t si
 	
 	if(CMD_NO_TBIT(pkt.cmd) == DRBCC_SYNC) {
 		DBG("Received SYNC message.");
-		if (kfifo_put(fifo, create_ack_buf(1, buf), ACK_LEN) < ACK_LEN) {
+		if (kfifo_in_spinlocked(&fifo, create_ack_buf(1, buf), ACK_LEN, &spin) < ACK_LEN) {
 			ERR("Putting ACK to fifo failed.");
 			return -EFAULT;
 		}
@@ -186,12 +178,12 @@ ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t si
 
 	if((CMD_NO_TBIT(pkt.cmd) != DRBCC_SYNC) && CMD_TBIT(pkt.cmd) != SHIFT_TBIT(toggle_t.tx)) {
 		ERR("Packet with wrong toggle bit received, putting fake ACK into fifo.");
-		if (kfifo_put(fifo, create_ack_buf(SHIFT_TBIT(!toggle_t.tx), buf), ACK_LEN) < ACK_LEN) {
+		if (kfifo_in_spinlocked(&fifo, create_ack_buf(SHIFT_TBIT(!toggle_t.tx), buf), ACK_LEN, &spin) < ACK_LEN) {
 			ERR("Putting ACK to fifo failed.");
 			return size+2;
 //			return -EFAULT;	// FIXME: or should I still return the size?
 		}
-/*		if (kfifo_put(fifo, create_sync_buf(buf), SYNC_LEN) < SYNC_LEN) {
+/*		if (kfifo_put(&fifo, create_sync_buf(buf), SYNC_LEN) < SYNC_LEN) {
 			ERR("Putting sync message to fifo failed.");
 			return -EFAULT;
 		}*/
@@ -220,22 +212,22 @@ ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t si
 		return -EAGAIN;
 	}
 
-	if (kfifo_put(fifo, create_ack_buf(toggle_t.tx, buf), ACK_LEN) < ACK_LEN) {
+	if (kfifo_in_spinlocked(&fifo, create_ack_buf(toggle_t.tx, buf), ACK_LEN, &spin) < ACK_LEN) {
 		ERR("Putting ACK to fifo failed.");
 		return -EFAULT;
 	}
 
-	DBGF("Put ACK packet into fifo. fifolen = %d", kfifo_len(fifo));
+	DBGF("Put ACK packet into fifo. fifolen = %d", kfifo_len(&fifo));
 	toggle_t.tx = !toggle_t.tx;
 
 	if(pkt.cmd != DRBCC_CMD_ILLEGAL) {
 		pkt.cmd |= SHIFT_TBIT(toggle_t.rx);
 		ret = serialize_packet(&pkt, buf);
-		if (kfifo_put(fifo, buf, ret) < ret) {
+		if (kfifo_in_spinlocked(&fifo, buf, ret, &spin) < ret) {
 			ERR("Putting data to fifo failed.");
 			return -EFAULT;
 		}
-		DBGF("Put packet with cmd = 0x%x into fifo. fifolen = %d", pkt.cmd, kfifo_len(fifo));
+		DBGF("Put packet with cmd = 0x%x into fifo. fifolen = %d", pkt.cmd, kfifo_len(&fifo));
 	}	
 
 //	DBG("Content of the fifo: ");	
@@ -243,8 +235,7 @@ ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t si
 	return size;
 }
 
-
-int drbcc_raw_ioctl(struct inode * ino, struct file * file, unsigned int cmd, unsigned long arg) {
+long drbcc_raw_ioctl(struct file * file, unsigned int cmd, unsigned long arg) {
 	/* TODO: if(Sig___) { ..}  */
 	DBGF("HydraIP DRBCC driver: %s.\n", __FUNCTION__);
 	DBGF("Cmd: %d, arg: %ld ", cmd, arg );
@@ -252,16 +243,15 @@ int drbcc_raw_ioctl(struct inode * ino, struct file * file, unsigned int cmd, un
 }
 
 static const struct file_operations drbcc_raw_fops = {
-	.owner   = THIS_MODULE,
-	.open    = drbcc_raw_open,
-	.read    = drbcc_raw_read,
-	.write   = drbcc_raw_write,
-	.release = drbcc_raw_close, 
-	.ioctl   = drbcc_raw_ioctl
+	.owner   		= THIS_MODULE,
+	.open    		= drbcc_raw_open,
+	.read    		= drbcc_raw_read,
+	.write   		= drbcc_raw_write,
+	.release 		= drbcc_raw_close, 
+	.unlocked_ioctl	= drbcc_raw_ioctl
 };
 
 int drbcc_raw_init_module(void) {
-	DEFINE_SPINLOCK(spin);
 	int ret;
 	DBGF("HydraIP DRBCC RAW driver: %s.\n", __FUNCTION__);
 
@@ -272,22 +262,18 @@ int drbcc_raw_init_module(void) {
 	ret = add_device_entry(&cdev, MINOR_NR_RAW, "drbcc-raw");
 
 	DBG("Init new kfifo.");
-	fifo = kfifo_alloc(READ_BUF, GFP_KERNEL, &spin);
-	if(!fifo) {
+	ret = kfifo_alloc(&fifo, MSG_MAX_BUF, GFP_KERNEL);
+	if (ret) {
 		DBG("Allocating fifo buffer in open function failed.");
-		return -EAGAIN;
 	}
-	memset(fifo->buffer, 0,  kfifo_len(fifo));
 
 	return ret;
 }
 
 void drbcc_raw_cleanup_module(void) {
 	DBGF("Unload HydraIP DRBCC RAW driver: %s.\n", __FUNCTION__);
-	if(!fifo) {
-		DBG("Fifo buffer was never initialized.");
-	}
-	kfifo_free(fifo);
+	
+	kfifo_free(&fifo);
 
 	cdev_del(&cdev);
 	DBGF("cdev_del: %p", &cdev);
