@@ -623,6 +623,7 @@ static void set_default_termios(struct tty_struct *tty) {
 
 	/* set baud rate like cfsetospeed does (see glibc sources) */
 //#ifdef _HAVE_STRUCT_TERMIOS_C_OSPEED
+	tios->c_ispeed = B921600;
 	tios->c_ospeed = B921600;
 //#endif
 	tios->c_cflag &= ~(CBAUD | CBAUDEX);
@@ -833,11 +834,16 @@ int __drbcc_init(void)
 
 	memset(&ino, 0, sizeof(ino));
 	memset(&filp, 0, sizeof(filp));
-	ino.i_rdev = MKDEV(4,64);
+	ino.i_rdev = MKDEV(252, 1);
  	filp.f_u.fu_list.next = &filp.f_u.fu_list;
  	filp.f_u.fu_list.prev = &filp.f_u.fu_list;
 
-	chrdev_open(&ino, &filp);	
+	if (!(err = chrdev_open(&ino, &filp))) {
+		printk(KERN_WARNING "Opening device ttyO1 failed.\n");
+		return err;
+	}
+
+	printk ("ended opening dev-file");	
 
 	DBG("Test debug");	
 	return 0;
