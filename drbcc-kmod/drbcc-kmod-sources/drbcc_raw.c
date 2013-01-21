@@ -167,7 +167,7 @@ ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t si
 	
 	if(CMD_NO_TBIT(pkt.cmd) == DRBCC_SYNC) {
 		DBG("Received SYNC message.");
-		if (kfifo_in_spinlocked(&fifo, create_ack_buf(1, buf), ACK_LEN, &spin) < ACK_LEN) {
+		if (kfifo_in_spinlocked(&fifo, &(ACK_BUF_RX_1), ACK_LEN, &spin) < ACK_LEN) {
 			ERR("Putting ACK to fifo failed.");
 			return -EFAULT;
 		}

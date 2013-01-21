@@ -187,8 +187,6 @@ static int transmit_msg(void)
 /* Why a void function? Because I don't care! */
 static void transmit_ack(void) 
 {
-#define ACK_BUF_RX_0 (const char[]){0xfa, 0x00, 0x87, 0x0f, 0xfb}
-#define ACK_BUF_RX_1 (const char[]){0xfa, 0x80, 0x8f, 0x8b, 0xfb}
 	int ret = 0;
 	struct tty_struct *tty = _the_bcc.tty;
 	

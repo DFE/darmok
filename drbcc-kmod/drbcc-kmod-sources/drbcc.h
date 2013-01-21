@@ -28,6 +28,9 @@
 #define SYNC_LEN 	MSG_MIN_LEN
 #define ACK_LEN 	MSG_MIN_LEN
 
+#define ACK_BUF_RX_0 (const char[]){0xfa, 0x00, 0x87, 0x0f, 0xfb}
+#define ACK_BUF_RX_1 (const char[]){0xfa, 0x80, 0x8f, 0x8b, 0xfb}
+
 /* FIXME: Delete this define? */
 #define BCC_TTY_BUFF_SIZE	4096	
 #define BCC_TTY_FLIPBUF_SIZE	TTY_FLIPBUF_SIZE
