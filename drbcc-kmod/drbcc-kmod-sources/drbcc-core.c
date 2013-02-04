@@ -77,6 +77,8 @@ struct bcc_struct {
 	void (*async_callback) (struct bcc_packet *);
 };
 
+static struct bcc_packet *curr_pkt = NULL;
+
 struct class *drbcc_class;
 
 static struct bcc_struct _the_bcc = {
@@ -308,55 +310,51 @@ static void receive_msg(unsigned char *buf, uint8_t len)
 {
 	uint8_t			readc = 0;
 	int 			ret = 0;
-	struct bcc_packet	*pkt = NULL;
 
 	do {
-		if (!pkt) {
-			pkt = (struct bcc_packet *) kmalloc(sizeof(struct bcc_packet), GFP_KERNEL);
-			DBGF("Kmalloced pkt (%p)\n", pkt);
+		if (!curr_pkt) {
+			curr_pkt = (struct bcc_packet *) kmalloc(sizeof(struct bcc_packet), GFP_KERNEL);
+			DBGF("Kmalloced curr_pkt (%p)\n", curr_pkt);
 
-			if (!pkt) {
+			if (!curr_pkt) {
 				DBG("Out of memory!");
 				return;
 			}
-			memset(pkt, 0, sizeof(struct bcc_packet));		
+			memset(curr_pkt, 0, sizeof(struct bcc_packet));		
 		} /* else: packet was already partly parsed */
 
-		ret = deserialize_packet(&buf[readc], pkt, len-readc);
+		ret = deserialize_packet(&buf[readc], curr_pkt, len-readc);
 
 		if(ret >= 0) {
 			DBG("Succeeded parsing message to struct bcc_packet");
 		} else if(ret == -EAGAIN) {
 			//TODO: just for testing: throw away party parsed packets
-			//kfree(pkt);
 			DBG("No full packet parsed, try again later");
 			/* Throttle is still 0 here */
 	//		do_throttle(1, tty);
 			// FIXME: potential memory leak because I never free partly parsed packet when I don't encounter stop char
-			//continue; --> did not work, because somehow I was stuck in an infinite loop
- 			kfree(pkt);
-			pkt = NULL;
-//			return;
 			break;
 		} else if(ret < 0) {
-			DBGF("%s: Free packet with adress %p", __FUNCTION__, pkt);
-			kfree(pkt);
-			pkt = NULL;
 			DBG("Failure while parsing packet.");
+			DBGF("%s: Free packet with adress %p", __FUNCTION__, curr_pkt);
+			kfree(curr_pkt);
+			curr_pkt = NULL;
 //			return;
 			break;
 		}	
 
-		if (!pkt)
-			DBG ("pkt was Null!");
+		if (!curr_pkt) {
+			DBG ("curr_pkt was Null!");
+			break;
+		}
 
-		INIT_WORK(&(pkt->work), rx_worker_thread);
-		queue_work(_the_bcc.wkq, &pkt->work);
+		INIT_WORK(&(curr_pkt->work), rx_worker_thread);
+		queue_work(_the_bcc.wkq, &curr_pkt->work);
 		readc += (ret + MSG_MIN_LEN);
 		DBGF("readc = %d, len: %d", readc, len);
 	
-		DBGF("______Command before Schedule: %d (0x%x)__________\n", pkt->cmd, pkt->cmd);
-		pkt = NULL;
+		DBGF("______Command before Schedule: %d (0x%x)__________\n", curr_pkt->cmd, curr_pkt->cmd);
+		curr_pkt = NULL;
 		schedule();
 	
 	} while(readc < len); 
@@ -683,10 +681,10 @@ static int bcc_open (struct tty_struct *tty)
 	if(tty->driver == NULL) {
 		DBG("No driver set in tty");
 	} else {
-		DBGF("driver_name: %s, name: %s", tty->driver->ops->driver_name, tty->driver->ops->name);
+		/*DBGF("driver_name: %s, name: %s", tty->driver->ops->driver_name, tty->driver->ops->name);
 		DBGF("(type == TTY_DRIVER_TYPE_SERIAL) ? %s , (subtype == SERIAL_TYPE_NORMAL) ? %s", 
 			(tty->driver->ops->type == TTY_DRIVER_TYPE_SERIAL)?"YES":"NO", 
-			(tty->driver->ops->subtype == SERIAL_TYPE_NORMAL)?"YES":"NO");
+			(tty->driver->ops->subtype == SERIAL_TYPE_NORMAL)?"YES":"NO"); */
 	}
 
 /*	mutex_lock(&tty->termios_mutex);

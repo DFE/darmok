@@ -91,30 +91,44 @@ int deserialize_packet(const unsigned char *cp, struct bcc_packet *pkt, int size
 {
 	uint16_t crc;
 	uint8_t i;
+	int t_size = size;
 
 #ifdef DEBUG
 	const unsigned char *p = cp;
 #endif
+
+	DBGF("%s (l. %d): pkt->curr_idx = %d, size = %d", __FUNCTION__, __LINE__, pkt->curr_idx, size);
+
 start:
-	if (*cp == DRBCC_START_CHAR) {
-		/* Start char, command, stop char */
-		pkt->curr_idx = 0;
-		DBG("Start char.");
-		cp++;
-	}
-	
 	if(pkt->curr_idx == 0) {
+		if (*cp == DRBCC_START_CHAR) {
+			/* Start char, command, stop char */
+			pkt->curr_idx = 1;
+			DBG("Start char.");
+			cp++;
+			t_size--;
+		} else {
+			return -EFAULT;
+		}
+	}
+
+	if(!t_size)	
+		return 0;
+
+	if(pkt->curr_idx == 1) {
 		cp = bcc_unesc_byte(cp, &pkt->cmd);
 		DBGF("Cmd: %c (%x)", pkt->cmd, pkt->cmd);
 		pkt->curr_idx++;
+		t_size--;
 	}
 
 /* Two bytes for start and stop char, one for command */
-/* !ATTENTION!: The last two characters red are the CRC! */
-	for(i = 0; i < size && pkt->curr_idx-1 < MSG_MAX_LEN-2 && *cp != DRBCC_STOP_CHAR &&  *cp != DRBCC_START_CHAR; pkt->curr_idx++, i++) {
+/* !ATTENTION!: The last itwo characters red are the CRC! */
+// pkt->curr_idx >=2
+	for(i = 0; i < t_size && pkt->curr_idx < MSG_MAX_LEN && *cp != DRBCC_STOP_CHAR &&  *cp != DRBCC_START_CHAR; pkt->curr_idx++, i++) {
 /* FIXME: Komischer code hier, muss ganz andersch gehn mit dem de-escapen */
-		cp = bcc_unesc_byte(cp, &pkt->data[pkt->curr_idx-1]);
-		DBGF("Nr. %d: %x", pkt->curr_idx-1, pkt->data[pkt->curr_idx-1]);
+		cp = bcc_unesc_byte(cp, &pkt->data[pkt->curr_idx-2]);
+		DBGF("Nr. %d: %x", pkt->curr_idx-2, pkt->data[pkt->curr_idx-2]);
 	}
 
 	if(*cp == DRBCC_START_CHAR) {
@@ -122,7 +136,7 @@ start:
 	}
 
 	if (*cp == DRBCC_STOP_CHAR) {
-		pkt->payloadlen = pkt->curr_idx-3;
+		pkt->payloadlen = pkt->curr_idx-4;
 		DBGF("%s Reached stop character. Struct filled (Payloadlen: %d).\n", BCC, pkt->payloadlen);
 		
 		crc = 0xffff;
@@ -138,13 +152,17 @@ start:
 			DBGF("%s CRC of packet was right.\n", BCC);
 			return pkt->payloadlen;
 		} else {
-			ERR("Received packet with wrong CRC\n");
-			DBGF("Expected CRC: 0x%x - CRC was: 0x%x", crc, pkt->crc);
+			ERR("Received packet with wrong CRC: Expected CRC: 0x%x - CRC was: 0x%x", crc, pkt->crc);
+#ifdef DEBUG
+			PRINTKN(p, size);
+#endif
 			return -EFAULT;
 		}
 	} else {
 		DBGF("%s No stop character found at the end of the buffer. Trying again next time\n.", BCC);
-		PRINTKN(cp, size);
+#ifdef DEBUG
+		PRINTKN(p, size);
+#endif
 		return -EAGAIN;
 	}
 }
