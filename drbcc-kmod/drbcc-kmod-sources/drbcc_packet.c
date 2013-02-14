@@ -96,6 +96,7 @@ int deserialize_packet(const unsigned char *cp, struct bcc_packet *pkt, int size
 	uint16_t crc;
 	uint8_t i;
 	int t_size = size;
+	int crc_postition;
 
 	const unsigned char *p = cp;
 
@@ -123,11 +124,12 @@ start:
 		pkt->curr_idx++;
 	}
 
-/* Two bytes for start and stop char, one for command */
-/* !ATTENTION!: The last itwo characters red are the CRC! */
-// pkt->curr_idx >=2
+/* 	Chars you will find in each message:
+*	Two bytes (one start and one stop char), one char for command, two chars for the CRC 
+* !ATTENTION!: The last two characters red are the CRC! 
+*/
+/* Here for the index holds: pkt->curr_idx >=2 */
 	for(; t_size > 0 && pkt->curr_idx < MSG_MAX_LEN && *p != DRBCC_STOP_CHAR &&  *p != DRBCC_START_CHAR; pkt->curr_idx++) {
-/* FIXME: Komischer code hier, muss ganz andersch gehn mit dem de-escapen */
 		t_size -= bcc_unesc_byte(&p, &pkt->data[pkt->curr_idx-2]);
 		DBGF("Nr. %d: %x", pkt->curr_idx-2, pkt->data[pkt->curr_idx-2]);
 	}
@@ -137,22 +139,27 @@ start:
 	}
 
 	if (*p == DRBCC_STOP_CHAR) {
-		pkt->payloadlen = pkt->curr_idx-4;
+/* 	Just from now on I know the length of the data in the packet.
+* 	The start character is at index 0.
+*	There are exactly MSG_MIN_LEN obligatory character in each message.
+*/
+		pkt->payloadlen = pkt->curr_idx-(MSG_MIN_LEN-1);	
 		DBGF("%s Reached stop character. Struct filled (Payloadlen: %d).\n", BCC, pkt->payloadlen);
-		
+		/* The last two bytes in Buffer are the 2-Byte CRC value */
+		crc_postition = pkt->payloadlen;	// data byte index: 0..payloadlen-1
 		crc = 0xffff;
 		crc = libdrbcc_crc_ccitt_update(crc, pkt->cmd);
-		for (i = 0; i < pkt->payloadlen; i++){
+		for (i = 0; i < crc_postition; i++){
 			crc = libdrbcc_crc_ccitt_update(crc, pkt->data[i]);
 		}
 
-		pkt->crc = (((uint16_t)pkt->data[pkt->payloadlen]) | (((uint16_t)pkt->data[pkt->payloadlen+1]) << 8));
+		pkt->crc = (((uint16_t)pkt->data[crc_postition]) | (((uint16_t)pkt->data[crc_postition+1]) << 8));
 
 		if (crc == pkt->crc) {
-			pkt->data[pkt->payloadlen] = pkt->data[pkt->payloadlen+1] = 0;
+/* Delete CRC from data buffer */
+			pkt->data[crc_postition] = pkt->data[crc_postition+1] = '\0';
 			DBGF("%s CRC of packet was right.\n", BCC);
 			return size - t_size;
-//			return pkt->payloadlen;
 		} else {
 			ERR("Received packet with wrong CRC: Expected CRC: 0x%x - CRC was: 0x%x", crc, pkt->crc);
 #ifdef DEBUG
