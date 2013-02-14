@@ -350,7 +350,7 @@ static void receive_msg(unsigned char *buf, uint8_t len)
 
 		INIT_WORK(&(curr_pkt->work), rx_worker_thread);
 		queue_work(_the_bcc.wkq, &curr_pkt->work);
-		readc += (ret + MSG_MIN_LEN);
+		readc += ret;
 		DBGF("readc = %d, len: %d", readc, len);
 	
 		DBGF("______Command before Schedule: %d (0x%x)__________\n", curr_pkt->cmd, curr_pkt->cmd);
