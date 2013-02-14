@@ -16,18 +16,20 @@
 *	\return	new index of next byte postition
 * 	\warning index will be changed through the function
 */
-int bcc_esc_byte(unsigned char pkt[], uint8_t b, int index)
+int bcc_esc_byte(unsigned char *cp, uint8_t b)
 {
-        if (DRBCC_START_CHAR == b || DRBCC_STOP_CHAR == b || DRBCC_ESC_CHAR == b)
-        {
-                pkt[index] = DRBCC_ESC_CHAR; 
+	int i = 0;
+	if (DRBCC_START_CHAR == b || DRBCC_STOP_CHAR == b || DRBCC_ESC_CHAR == b)
+	{
+		*cp = DRBCC_ESC_CHAR; 
+		cp++;
 		b = ~b;
-		index++;
-        }
-        pkt[index] = b;
+		i++;
+	}
+	*cp = b;
 //	DBGF("escape Nr. %d: %x\n", index, b); 
-	index++;
-	return index;
+	i++;
+	return i;
 }
 
 /**
@@ -235,7 +237,7 @@ int serialize_packet(struct bcc_packet * pkt, unsigned char tx_buff[])
 	tx_buff[idx] = DRBCC_START_CHAR;
 	idx++;
 
-	idx = bcc_esc_byte(tx_buff, pkt->cmd, idx);
+	idx += bcc_esc_byte(&tx_buff[idx], pkt->cmd);
         crc = libdrbcc_crc_ccitt_update(crc, pkt->cmd);
 
 	/* FIXME: What if parameter is null?? */
@@ -243,12 +245,12 @@ int serialize_packet(struct bcc_packet * pkt, unsigned char tx_buff[])
 	/* Notice: idx will be changed through the function bcc_esc_byte */
 	/* FIXME: 140-5: Because there might be two escape seq for crc hi and crc lo */
 	for(; idx < MSG_MAX_BUF-5 && j < pkt->payloadlen; j++) {
-	                idx = bcc_esc_byte(tx_buff, pkt->data[j], idx);
+	                idx += bcc_esc_byte(&tx_buff[idx], pkt->data[j]);
                         crc = libdrbcc_crc_ccitt_update(crc, pkt->data[j]);
 	}
 	
-	idx = bcc_esc_byte(tx_buff, crc & 0xff, idx);
-	idx = bcc_esc_byte(tx_buff, crc >> 8, idx);
+	idx += bcc_esc_byte(&tx_buff[idx], crc & 0xff);
+	idx += bcc_esc_byte(&tx_buff[idx], crc >> 8);
 
 	tx_buff[idx] = DRBCC_STOP_CHAR;
 
