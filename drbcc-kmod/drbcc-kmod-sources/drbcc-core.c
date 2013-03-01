@@ -476,6 +476,7 @@ static int perform_transaction(void)
 	DBGF("**** _the_bcc.curr->cmd = 0x%x\n", _the_bcc.curr->cmd);
 	_the_bcc.temp_tx = *(_the_bcc.curr);
 
+	transaction_ready = 0;
 	ret = transmit_msg();
 
 	if (ret < 0) {
@@ -490,11 +491,9 @@ static int perform_transaction(void)
 *	bzw KANN sich jemals ein status-update zwischen ack und rsp drängen? --> Micha fragen */
 	do {
 /* TODO: Oooops: race condition could occure? Actually, we should be save, since no two threads should ever be on this same point on a single core processor */
-		transaction_ready = 0;
 		DBG("transaction_ready = 0");
 		ret = wait_event_interruptible_timeout(wq, transaction_ready!=0, 2*BCC_PKT_TIMEOUT);
 		DBGF("transaction_ready = %d", transaction_ready);
-		transaction_ready = 0;
 		DBGF("ret = %d", ret);
 
 		if (ret == 0) {
