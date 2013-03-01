@@ -135,10 +135,12 @@ start:
 	}
 
 	if(*p == DRBCC_START_CHAR) {
+		pkt->curr_idx = 0;
 		goto start;
 	}
 
 	if (*p == DRBCC_STOP_CHAR) {
+		t_size--;
 /* 	Just from now on I know the length of the data in the packet.
 * 	The start character is at index 0.
 *	There are exactly MSG_MIN_LEN obligatory character in each message.
@@ -167,6 +169,9 @@ start:
 #endif
 			return -EFAULT;
 		}
+	} else if(pkt->curr_idx >= MSG_MAX_LEN) {
+		ERR("Message too long: %d", pkt->curr_idx);
+		return -EFAULT;
 	} else {
 		DBGF("%s No stop character found at the end of the buffer. Trying again next time\n.", BCC);
 #ifdef DEBUG
