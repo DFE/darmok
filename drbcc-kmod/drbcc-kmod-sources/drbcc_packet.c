@@ -116,13 +116,16 @@ start:
 	}
 
 	if(!t_size)	
-		return 0;
+		return size;
 
 	if(pkt->curr_idx == 1) {
 		t_size -= bcc_unesc_byte(&p, &pkt->cmd);
 		DBGF("Cmd: %c (%x)", pkt->cmd, pkt->cmd);
 		pkt->curr_idx++;
 	}
+	
+	if(!t_size)	
+		return size;
 
 /* 	Chars you will find in each message:
 *	Two bytes (one start and one stop char), one char for command, two chars for the CRC 

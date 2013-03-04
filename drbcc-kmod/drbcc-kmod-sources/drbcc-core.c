@@ -31,7 +31,7 @@
 /* Timeout in jiffies; here: ?00ms */
 #define BCC_PKT_TIMEOUT			HZ/2
 
-#include "drbcc.h"
+#include "drbcc_core.h"
 
 /* A homepage said N_MOUSE might be unused by most systems */
 
@@ -72,7 +72,8 @@ struct bcc_struct {
 	struct bcc_packet 	*resp;		
 	struct bcc_packet 	temp_tx;		
 	
-	struct workqueue_struct	*wkq;
+	struct workqueue_struct	*rx_wkq;
+	struct workqueue_struct	*parser_wkq;
 
 	void (*async_callback) (struct bcc_packet *);
 };
@@ -221,6 +222,13 @@ static int toggle_bit_save_rx(struct bcc_packet *pkt) {
 	}
 }
 
+static void parser_worker_thread(struct work_struct *work)
+{
+	struct parse_work *pw = container_of(work, struct parse_work, work);
+
+	receive_msg(pw->buf, pw->cnt);
+}
+
 /* typedef enum {
 	RQ_STD, RQ_STD_ANS, RQ_WAIT_ANS, NONE
 } GLOBAL_L2_STATES;*/
@@ -228,7 +236,7 @@ static int toggle_bit_save_rx(struct bcc_packet *pkt) {
 static void rx_worker_thread(struct work_struct *work)
 {
 	int i = 0;
-        struct bcc_packet *pkt = container_of(work, struct bcc_packet, work);
+    struct bcc_packet *pkt = container_of(work, struct bcc_packet, work);
 
 	if (!pkt) {
 		printk(KERN_NOTICE "Pkt pointer was null, something went terribly wrong.\n");
@@ -303,7 +311,7 @@ freeptr:
 	DBGF("Free pointer to pkt (%p)\n", pkt);
 	kfree(pkt);
 	pkt = NULL;
-	_the_bcc.resp = NULL;
+//	_the_bcc.resp = NULL;
 }
 
 static void receive_msg(unsigned char *buf, uint8_t len)
@@ -325,7 +333,7 @@ static void receive_msg(unsigned char *buf, uint8_t len)
 
 		ret = deserialize_packet(&buf[readc], curr_pkt, len-readc);
 
-		if(ret >= 0) {
+		if(ret > 0) {
 			DBG("Succeeded parsing message to struct bcc_packet");
 		} else if(ret == -EAGAIN) {
 			//TODO: just for testing: throw away party parsed packets
@@ -349,7 +357,7 @@ static void receive_msg(unsigned char *buf, uint8_t len)
 		}
 
 		INIT_WORK(&(curr_pkt->work), rx_worker_thread);
-		queue_work(_the_bcc.wkq, &curr_pkt->work);
+		queue_work(_the_bcc.rx_wkq, &curr_pkt->work);
 		readc += ret;
 		DBGF("readc = %d, len: %d", readc, len);
 	
@@ -372,10 +380,11 @@ static void receive_msg(unsigned char *buf, uint8_t len)
 */
 static void bcc_receive_buf(struct tty_struct *tty, const unsigned char *cp, char *fp, int count) 
 {
-	unsigned char 			newbuf[MSG_MAX_BUF];
+//	unsigned char 			newbuf[MSG_MAX_BUF];
 	uint8_t				i, j;
 	const unsigned char 		*p;
 	char				*f, flags = TTY_NORMAL;
+	struct parse_work	*pw;
 
 	DBGF("Received %d bytes from driver: \n", count);
 	PRINTKN(cp, count);
@@ -386,7 +395,12 @@ static void bcc_receive_buf(struct tty_struct *tty, const unsigned char *cp, cha
 	}
 
 //	tty->receive_room -= count; 
-	memset(newbuf, 0, MSG_MAX_BUF);
+/* TODO: free packet!*/
+	pw = (struct parse_work *) kmalloc(sizeof(struct parse_work), GFP_KERNEL);
+	if (!pw) {
+		ERR("Out of memory");
+	}
+	memset(&pw->buf, 0, MSG_MAX_BUF);
 
 // FIXME: put into separate function?: 
 	for(j = 0, i = count, p = cp, f = fp; i; i--, p++) {
@@ -394,7 +408,7 @@ static void bcc_receive_buf(struct tty_struct *tty, const unsigned char *cp, cha
 			flags = *f++;
 		switch (flags) {
 		case TTY_NORMAL:	
-			newbuf[j] = *p;
+			pw->buf[j] = *p;
 //			DBGF("Char %d (0x%x)", newbuf[j], newbuf[j]);
 			j++;
 			break;
@@ -414,8 +428,11 @@ static void bcc_receive_buf(struct tty_struct *tty, const unsigned char *cp, cha
 	    tty->driver->ops->throttle)
 		tty->driver->ops->throttle(tty);
 #endif
-	receive_msg(newbuf, j);
-
+	//receive_msg(newbuf, j);
+	pw->cnt = j;
+	INIT_WORK(&pw->work, parser_worker_thread);
+	queue_work(_the_bcc.parser_wkq, &pw->work);
+	schedule();
 }
 
 /*
@@ -489,9 +506,9 @@ static int perform_transaction(void)
 /* TODO: Rly? hier eine do-while-Schleife? dann aber konsequent sein 
 *	und eine auch in perform_transaction_ans implementieren...
 *	bzw KANN sich jemals ein status-update zwischen ack und rsp drängen? --> Micha fragen */
-	do {
+	do{
 /* TODO: Oooops: race condition could occure? Actually, we should be save, since no two threads should ever be on this same point on a single core processor */
-		DBG("transaction_ready = 0");
+		DBGF("transaction_ready = %d", transaction_ready);
 		ret = wait_event_interruptible_timeout(wq, transaction_ready!=0, 2*BCC_PKT_TIMEOUT);
 		DBGF("transaction_ready = %d", transaction_ready);
 		DBGF("ret = %d", ret);
@@ -504,6 +521,7 @@ static int perform_transaction(void)
 			return -EFAULT;
 		}
 		i++;
+		transaction_ready = 0;
 	} while(ret <= 0 && i < MAX_FAILED_PKT);
 
 	return ret;
@@ -693,7 +711,8 @@ static int bcc_open (struct tty_struct *tty)
 */
 	set_default_termios(tty); 
 
-	_the_bcc.wkq = create_singlethread_workqueue("drbcc_rx_wkq");
+	_the_bcc.rx_wkq = create_singlethread_workqueue("drbcc_rx_wkq");
+	_the_bcc.parser_wkq = create_singlethread_workqueue("drbcc_parser_wkq");
 
 	return 0;
 }
@@ -714,7 +733,8 @@ void bcc_close (struct tty_struct *tty)
 		return;	
 
 	flush_scheduled_work();
-	destroy_workqueue(_the_bcc.wkq);
+	destroy_workqueue(_the_bcc.parser_wkq);
+	destroy_workqueue(_the_bcc.rx_wkq);
 
 /* TODO: Delete */
 	if(tty->read_buf) {	
