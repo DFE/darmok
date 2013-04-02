@@ -76,9 +76,8 @@ static const uint8_t cmd_responses[] = {
 	[DRBCC_REQ_FW_INVALIDATE]		= DRBCC_IND_FW_INVALIDATED,		/* 16 */
 	[DRBCC_REQ_BCTRL_RESTART]		= DRBCC_IND_BCTRL_RESTART_ACCEPTED,	/* 18 */
 	[DRBCC_REQ_SET_LED]			= DRBCC_CMD_ILLEGAL,			/* 20 */
-	[DRBCC_IND_FW_UPDATE_STARTED]		= DRBCC_CMD_ILLEGAL,			/* 21 */
 	[DRBCC_REQ_BL_UPDATE]			= DRBCC_IND_BL_UPDATE,			/* 22 */
-	[DRBCC_REQ_HEARTBEAT]			= DRBCC_IND_STATUS,			/* 24 */ 
+	[DRBCC_REQ_HEARTBEAT]			= DRBCC_CMD_ILLEGAL,			/* 24 */ 
 	[DRBCC_REQ_STATUS]			= DRBCC_IND_STATUS,			/* 25 */
 	[DRBCC_REQ_HD_EJECT]			= DRBCC_CMD_ILLEGAL,			/* 27 */
 	[DRBCC_REQ_HD_ONOFF]			= DRBCC_CMD_ILLEGAL,			/* 28 */
@@ -91,7 +90,6 @@ static const uint8_t cmd_responses[] = {
 	[DRBCC_REQ_ID_DATA]			= DRBCC_IND_ID_DATA,			/* 38 */
 	[DRBCC_REQ_MEMDEV_READ]			= DRBCC_IND_MEMDEV_READ,		/* 40 */
 	[DRBCC_REQ_MEMDEV_WRITE]		= DRBCC_IND_MEMDEV_WRITE_RESULT,	/* 42 */
-	[DRBCC_IND_KEY_PROCESSING]		= DRBCC_CMD_ILLEGAL,			/* 44 */ /* TODO: really right answer or is this message send by the booard controller? */
 	[DRBCC_CLEAR_RINGLOG_REQ]		= DRBCC_IND_RINGLOG_POS,		/* 45 */
 	[DRBCC_OXE_UART_BOOT_CALCCRC_IND]	= DRBCC_OXE_UART_BOOT_CALCCRC_REQ,	/* 47 */
 	[DRBCC_OXE_UART_BOOT_RUN_REQ]		= DRBCC_CMD_ILLEGAL,			/* 48 */
@@ -100,8 +98,6 @@ static const uint8_t cmd_responses[] = {
 	[DRBCC_REQ_DEBUG_SET]			= DRBCC_CMD_ILLEGAL,			/* 51 */ 
 	[DRBCC_REQ_DEBUG_GET]			= DRBCC_IND_DEBUG_GET,			/* 52 */
 	[DRBCC_SYNC_CMD_ERROR]			= DRBCC_CMD_ILLEGAL,			/* 127 */ /* Or what should be done here? */
-	[DRBCC_CMD_FORWARD]			= DRBCC_CMD_ILLEGAL,			/* No number */ /* Or what should be done here? */
-
  
 
 	[54 ... 126] 				= DRBCC_CMD_ILLEGAL,
