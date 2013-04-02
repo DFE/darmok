@@ -20,7 +20,6 @@
 #include <linux/platform_device.h>
 
 #include "drbcc.h"
-//#include "debug.h"
 
 
 #define MODULE_NAME "drbcc-rtc"
@@ -128,20 +127,6 @@ int set_rtc_time(struct device *dev, struct rtc_time *rtc_tm)
 	return 0;
 }
 
-
-/* int drbcc_rtc_open(struct inode * ino, struct file * file) {	
-	DBG("Open Function of rtc module called.");	
-	
-	return 0;
-}
-
-int drbcc_rtc_close(struct inode * inode, struct file * file)
-{
-	DBG("Closing operation of rtc module called.");
-
-	return 0;
-} */
-
 /**
 *	Called by userspace to set and read time through a system call. 
 *	\param	inode		pointer to metadata structure of file	
@@ -197,13 +182,9 @@ static int drbcc_rtc_ioctl(struct device *dev, unsigned int cmd, unsigned long a
 		}
 	}	
 
-//	return 0;
 }
 
 static const struct rtc_class_ops drbcc_rtc_ops = {
-        //roc 	= drbcc_rtc_proc,
-//	.open    = drbcc_rtc_open,
-//	.release = drbcc_rtc_close, 
 	.read_time 	= get_rtc_time,
 	.set_time	= set_rtc_time,
 	.ioctl  	= drbcc_rtc_ioctl,
@@ -265,12 +246,6 @@ static int __init drbcc_rtc_init_module(void) {
 
 	return 0;
 
-	/* Register device handle in kernel*/
-/*	cdev_init(&cdev, &drbcc_rtc_fops);
-	cdev.owner = THIS_MODULE;
-
-	ret = add_device_entry(&cdev, MINOR_NR_RTC, "drbcc-rtc");	*/
-
 exit_device_unregister:
 	platform_device_unregister(drbcc_rtc);
 	platform_device_put(drbcc_rtc);
@@ -287,15 +262,10 @@ static void __exit drbcc_rtc_cleanup_module(void) {
 
 	platform_device_unregister(drbcc_rtc);
 	platform_driver_unregister(&drbcc_rtc_drv);
-
-	/* cdev_del(&cdev);
-	DBGF("cdev_del: %p", &cdev);
-
-	remove_device_entry(MINOR_NR_RTC); */
 }
 
 module_init(drbcc_rtc_init_module);
 module_exit(drbcc_rtc_cleanup_module);
 MODULE_AUTHOR("Christina Quast");
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("DRBCC RAW driver");
+MODULE_DESCRIPTION("DRBCC RTC driver");
