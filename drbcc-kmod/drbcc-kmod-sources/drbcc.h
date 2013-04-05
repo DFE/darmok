@@ -139,9 +139,6 @@ struct bcc_packet {
 int serialize_packet(struct bcc_packet * pkt, unsigned char tx_buff[MSG_MAX_BUF]);
 int deserialize_packet(const unsigned char *cp, struct bcc_packet *pkt, int size);
 
-unsigned char *create_ack_buf(uint8_t toggle, unsigned char *tx_buff);
-unsigned char *create_sync_buf(unsigned char *tx_buff);
-
 int transmit_packet(struct bcc_packet *pkt,  uint8_t resp_cmd);
 int register_async_callback(void *func_ptr);
 

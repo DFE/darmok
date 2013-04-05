@@ -16,7 +16,7 @@
 *	\return	new index of next byte postition
 * 	\warning index will be changed through the function
 */
-int bcc_esc_byte(unsigned char *cp, uint8_t b)
+static int bcc_esc_byte(unsigned char *cp, uint8_t b)
 {
 	int i = 0;
 	if (DRBCC_START_CHAR == b || DRBCC_STOP_CHAR == b || DRBCC_ESC_CHAR == b)
@@ -39,7 +39,7 @@ int bcc_esc_byte(unsigned char *cp, uint8_t b)
 *	\return pointer to next position in packet buffer to parse
 * 	\warning cp will be changed through the function
 */
-uint8_t bcc_unesc_byte(const unsigned char ** cp, unsigned char *pkt_data)
+static uint8_t bcc_unesc_byte(const unsigned char ** cp, unsigned char *pkt_data)
 {
 	if (DRBCC_ESC_CHAR == **cp)
         {
@@ -69,7 +69,7 @@ uint8_t bcc_unesc_byte(const unsigned char ** cp, unsigned char *pkt_data)
 *	\param	data	byte in packet to base the CRC calculation on 
 *	\return	newly calculated CRC value
 */
-uint16_t libdrbcc_crc_ccitt_update(uint16_t crc, uint8_t data)
+static uint16_t libdrbcc_crc_ccitt_update(uint16_t crc, uint8_t data)
 {
         data ^= lo8 (crc);
         data ^= data << 4;
@@ -185,58 +185,6 @@ start:
 }
 EXPORT_SYMBOL(deserialize_packet);
 
-/* TODO: Makro draus machen!!!!!! */
-
-/**
-*	Create ACK packet and fill it into buffer passed to function
-*	\param	toggle	one bit sequence number to use
-*	\param	tx_buff	pointer to buffer, must be at least ACK_LEN in size
-*	\return pointer to message buffer
-*/
-unsigned char *create_ack_buf(uint8_t toggle, unsigned char *tx_buff)
-{
-	int ret;
-	struct bcc_packet pkt = {
-		.cmd = (DRBCC_ACK | (toggle & TOGGLE_BITMASK)),	// FIXME: Macro?
-	};
-	
-	DBGF("Toggle bit of ACK message: %d.", toggle);
-
-	if ((ret = serialize_packet(&pkt, tx_buff)) < ACK_LEN) {
-		DBGF("How could anything get wrong with creating an ACK message??");
-		return NULL;
-	}
-	DBG("Created ack message.");
-	return tx_buff;
-}
-EXPORT_SYMBOL(create_ack_buf);
-
-/* FIXME: Als makros darstellen? */
-/**
-*	Create SYNC packet and fill it into buffer passed to function
-*	\param	tx_buff	pointer to buffer, must be at least ACK_LEN in size
-*	\return pointer to message buffer
-*/
-unsigned char *create_sync_buf(unsigned char *tx_buff)
-{
-	int ret;
-	struct bcc_packet pkt = { DRBCC_SYNC | SHIFT_TBIT(1) };
-
-	DBG("Create synchronisation message in buffer.");
-
-	if ((ret = serialize_packet(&pkt, tx_buff)) < SYNC_LEN) {
-		DBGF("How could anything get wrong with creating a static sync message??");
-		return NULL;
-	}
-	DBG("Created sync message.");
-	return tx_buff;
-}
-EXPORT_SYMBOL(create_sync_buf);
-
-
-/* FIXME: adopt j to pkt->curr_idx 
-* pointer to buffer?
-*/
 /**
 *	Fill passed buffer based on the values in packet structure passed to function.
 *	\param 	tx_buff	buffer to fill message in
