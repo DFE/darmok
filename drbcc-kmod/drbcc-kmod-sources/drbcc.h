@@ -54,8 +54,8 @@
 *  \brief	state machine for one bit sequence number in both directions (receive and transmit)
 */
 struct toggle {
-	uint8_t rx:1;	/**< current toggle bit of packets to be received */
-	uint8_t tx:1;	/**< current toggle bit of packets to be transmitted */
+	uint8_t rx;	/**< current toggle bit of packets to be received */
+	uint8_t tx;	/**< current toggle bit of packets to be transmitted */
 };
 
 /* Mapping request to response message type */
