@@ -6,7 +6,7 @@
  *	This code is the management part of the DResearch boardcontroller
  * 	protocol stack and manages access to the serial interface "/dev/ttyS0".
  * 	It implements a line discipline.
- *	It can be compiled as a module or straight into the kernel.
+ *	The code can be compiled as a module or straight into the kernel.	
  */
 #include <linux/version.h>
  #include <linux/module.h>
