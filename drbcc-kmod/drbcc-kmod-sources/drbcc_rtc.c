@@ -46,11 +46,9 @@ typedef enum { SEC, MIN, HOUR, DAY, DATE, MONTH, YEAR, EPOCH } PKTF_t;	/* Field 
 int get_rtc_time(struct device *dev, struct rtc_time *rtc_tm)
 {
 	int ret = 0;
-	DEFINE_SEMAPHORE(sem);
 	struct bcc_packet pkt = { 
 		.cmd 		=  DRBCC_REQ_RTC_READ,
 		.payloadlen	= 0,
-		.sem		= &sem,
 	};
 	DBG("Request time from microcontroller.");	
 		
@@ -92,11 +90,9 @@ int get_rtc_time(struct device *dev, struct rtc_time *rtc_tm)
 int set_rtc_time(struct device *dev, struct rtc_time *rtc_tm)
 {
 	int month, year, ret = 0;
-	DEFINE_SEMAPHORE(sem);
 	struct bcc_packet pkt = { 
 		.cmd 		=  DRBCC_REQ_RTC_SET,
 		.payloadlen	= 0,
-	/* TODO: put semaphore declaration into core */
 	};
 
 	DBG("Set RTC time through mircocontroller.");	

@@ -23,6 +23,8 @@
 #include <linux/wait.h>
 #include <linux/sched.h>
 
+#include "drbcc_core.h"
+
 /* Remove when not needed for dummy write function anymore, 
 * since communication to userspace via /dev/ttyS0 is prohibited 
 */
@@ -206,14 +208,14 @@ static void transmit_ack(void)
 }
 
 static int toggle_bit_save_rx(struct bcc_packet *pkt) {
-	if (CMD_TBIT(pkt->cmd) == SHIFT_TBIT(toggle_t.rx)) {	
+	if (TBIT_OF_CMD(pkt->cmd) == SHIFT_TBIT(toggle_t.rx)) {	
 		transmit_ack();
 		toggle_t.rx = !toggle_t.rx;
 		DBGF("New rx_toggle: 0x%x", toggle_t.rx);
 		return 0;	
 	} else {
 		DBGF("**** Err on toggle bit (Expected: 0x%x, received: 0x%x (pkt->cmd = 0x%x))!\n", 
-			SHIFT_TBIT(toggle_t.rx), CMD_TBIT(pkt->cmd), pkt->cmd);
+			SHIFT_TBIT(toggle_t.rx), TBIT_OF_CMD(pkt->cmd), pkt->cmd);
 		// FIXME: Hack Alert!!! non-atomic toggling
 		toggle_t.rx = !toggle_t.rx;
 		transmit_ack();
@@ -242,7 +244,7 @@ static void rx_worker_thread(struct work_struct *work)
 		printk(KERN_NOTICE "Pkt pointer was null, something went terribly wrong.\n");
 	}
 
-	if (l2_state == RQ_STD && CMD_NO_TBIT(pkt->cmd) == DRBCC_ACK) {
+	if (l2_state == RQ_STD && CMD_WITHOUT_TBIT(pkt->cmd) == DRBCC_ACK) {
 		DBG("*** l2_state = RQ_STD\n");
 		CMD_DEL_TBIT(pkt);
 		DBGF("pkt->cmd: 0x%x", pkt->cmd);
@@ -260,7 +262,7 @@ static void rx_worker_thread(struct work_struct *work)
 		return;
 	}
 
-	if (l2_state == RQ_STD_ANS && CMD_NO_TBIT(pkt->cmd) == DRBCC_ACK) {
+	if (l2_state == RQ_STD_ANS && CMD_WITHOUT_TBIT(pkt->cmd) == DRBCC_ACK) {
 		DBG("*** l2_state = RQ_STD_ANS\n");
 		toggle_t.tx = !toggle_t.tx;	
 		DBGF("new tx_toggle = %d\n", toggle_t.tx );
@@ -294,7 +296,7 @@ static void rx_worker_thread(struct work_struct *work)
 	} else {
 		DBG("Start async msg loop.");
 		for(i = 0; i < sizeof(async_cmd)/sizeof(char); i++) {
-			if (CMD_NO_TBIT(pkt->cmd) == async_cmd[i]) {
+			if (CMD_WITHOUT_TBIT(pkt->cmd) == async_cmd[i]) {
 				/* TODO: pass to /proc/something or similar, or log
 					in case nobody has registered for async messages */
 				CMD_DEL_TBIT(pkt);

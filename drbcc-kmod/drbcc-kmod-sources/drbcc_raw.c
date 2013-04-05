@@ -163,7 +163,7 @@ ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t si
 	}
 	
 
-	if(((CMD_NO_TBIT(pkt.cmd) == DRBCC_ACK) && (CMD_TBIT(pkt.cmd) == SHIFT_TBIT(toggle_t.rx))) || (CMD_NO_TBIT(pkt.cmd) == DRBCC_SYNC_ANSWER)) {
+	if(((CMD_WITHOUT_TBIT(pkt.cmd) == DRBCC_ACK) && (TBIT_OF_CMD(pkt.cmd) == SHIFT_TBIT(toggle_t.rx))) || (CMD_WITHOUT_TBIT(pkt.cmd) == DRBCC_SYNC_ANSWER)) {
 		DBG("Received ACK message.");
 		toggle_t.rx = !toggle_t.rx;
 		return size;
@@ -181,7 +181,7 @@ ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t si
 	}
 
 
-	if(CMD_TBIT(pkt.cmd) != SHIFT_TBIT(toggle_t.tx)) {
+	if(TBIT_OF_CMD(pkt.cmd) != SHIFT_TBIT(toggle_t.tx)) {
 		ERR("Packet with wrong toggle bit received, putting fake ACK into fifo.");
 		if (kfifo_in_spinlocked(&fifo, ACK_BUF_BY_TBIT(!toggle_t.tx), ACK_LEN, &spin) < ACK_LEN) {
 			ERR("Putting ACK to fifo failed.");
