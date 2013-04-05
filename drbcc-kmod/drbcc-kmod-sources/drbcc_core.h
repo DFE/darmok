@@ -10,6 +10,35 @@
 
 #include "drbcc.h"
 
+/* Timeout in jiffies; here: ?00ms */
+#define BCC_PKT_TIMEOUT			HZ/2
+
+#include "drbcc_core.h"
+
+#define BCC_MAGIC			22
+#define BCC_TTY_MAJOR		123
+
+#define DEBUG_DRBCC
+#define DEBUG
+
+#define RESEND_SYNC_THRESHOLD	2	
+#define RESEND_THRESHOLD	2	
+#define RX_CURR_BUF_CNT		2
+
+#define DRIVER_THROTTLING
+
+#ifndef BCC
+#define BCC "[DRBCC_CORE] "
+#endif
+
+
+typedef enum {
+	RQ_STD, RQ_STD_ANS, RQ_WAIT_ANS, RQ_SYNC, NONE
+} GLOBAL_L2_STATES;
+
+static char async_cmd[]  = { DRBCC_IND_STATUS, DRBCC_IND_ACCEL_EVENT };
+static char l2_state = NONE;
+
 struct parse_work {
 	unsigned char buf[MSG_MAX_BUF];
 	int cnt;
@@ -59,6 +88,22 @@ const uint8_t cmd_responses[] = {
 	[54 ... 126] 				= DRBCC_CMD_ILLEGAL,
 };
 
+/*
+* Layer 2 functions:
+* Transactionbased: Request-response-logic
+* Keeps track of the toggle bits
+*/
+static int perform_transaction(void);
+//static int perform_transaction_ans(void);
+
+/*
+* Layer 1 functions:
+* Parsing: char[] <==> struct bcc_struct
+*/
+static int synchronize(void);
+static int transmit_msg(void);
+static void transmit_ack(void); 
+static void receive_msg(unsigned char *buf, uint8_t len);
 
 
 #endif	/* __DRBCC_CORE_H__ */

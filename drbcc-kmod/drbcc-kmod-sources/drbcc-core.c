@@ -25,39 +25,12 @@
 
 #include "drbcc_core.h"
 
-/* Remove when not needed for dummy write function anymore, 
-* since communication to userspace via /dev/ttyS0 is prohibited 
-*/
-#include <asm/uaccess.h>
-
-/* Timeout in jiffies; here: ?00ms */
-#define BCC_PKT_TIMEOUT			HZ/2
-
-#include "drbcc_core.h"
-
-/* A homepage said N_MOUSE might be unused by most systems */
-
-#define BCC_MAGIC			22
-#define BCC_TTY_MAJOR			123
-
-#define DEBUG_DRBCC
-#define DEBUG
 
 // TODO: maybe decrease count when closing the ldisc?
 extern int chrdev_open(struct inode * inode, struct file * filp);
-struct inode ino; 
-struct file filp;
-struct tty_struct *ttyp;
-
-#define RESEND_SYNC_THRESHOLD	2	
-#define RESEND_THRESHOLD	2	
-#define RX_CURR_BUF_CNT		2
-
-#define DRIVER_THROTTLING
-
-#ifndef BCC
-#define BCC "[DRBCC_CORE] "
-#endif
+static struct inode ino; 
+static struct file filp;
+static struct tty_struct *ttyp;
 
 /**
 *  \struct	bcc_struct
@@ -82,7 +55,7 @@ struct bcc_struct {
 
 static struct bcc_packet *curr_pkt = NULL;
 
-struct class *drbcc_class;
+static struct class *drbcc_class;
 
 static struct bcc_struct _the_bcc = {
 	.opened = 0,
@@ -104,42 +77,6 @@ static struct toggle toggle_t = {
 	.rx = 1,
 	.tx = 1,
 };
-
-typedef enum {
-	RQ_STD, RQ_STD_ANS, RQ_WAIT_ANS, RQ_SYNC, NONE
-} GLOBAL_L2_STATES;
-
-static char async_cmd[]  = { DRBCC_IND_STATUS, DRBCC_IND_ACCEL_EVENT };
-static char l2_state = NONE;
-
-/*
-* Layer 3 functions:
-*/
-// static int send_sync_msg(void);
-// static int send_msg(void); 
-// static int send_msg_ans(void); 
-
-/*
-* Layer 2 functions:
-* Transactionbased: Request-response-logic
-* Keeps track of the toggle bits
-*/
-static int perform_transaction(void);
-//static int perform_transaction_ans(void);
-
-/*
-* Layer 1 functions:
-* Parsing: char[] <==> struct bcc_struct
-*/
-static int synchronize(void);
-static int transmit_msg(void);
-static void transmit_ack(void); 
-static void receive_msg(unsigned char *buf, uint8_t len);
-
-/*
-* Return codes for inter-layer-communication
-*/
-#define ACK_RECEIVED 	10
 
 #ifdef DRIVER_THROTTLING
 /* FIXME: rewrite code? copied from drivers/char/n_tty.c */
