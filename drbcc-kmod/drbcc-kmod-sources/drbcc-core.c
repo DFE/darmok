@@ -413,7 +413,6 @@ static int synchronize(void)
 #define MAX_FAILED_PKT 3
 static int perform_transaction(void) 
 {
-	int i = 0;
 	int ret = 0;
 
 	DBGF("**** _the_bcc.curr->cmd = 0x%x\n", _the_bcc.curr->cmd);
@@ -432,7 +431,9 @@ static int perform_transaction(void)
 	DBGF("**** _the_bcc.curr->cmd = 0x%x\n", _the_bcc.curr->cmd);
 	_the_bcc.temp_tx = *(_the_bcc.curr);
 
+	WARN_ON(transaction_ready != 0);
 	transaction_ready = 0;
+
 	ret = transmit_msg();
 
 	if (ret < 0) {
@@ -442,26 +443,19 @@ static int perform_transaction(void)
 		
 	DBGF("***** Transmitted msg with cmd 0x%x \n", _the_bcc.temp_tx.cmd);	
 
-/* TODO: Rly? hier eine do-while-Schleife? dann aber konsequent sein 
-*	und eine auch in perform_transaction_ans implementieren...
-*	bzw KANN sich jemals ein status-update zwischen ack und rsp drängen? --> Micha fragen */
-	do{
-/* TODO: Oooops: race condition could occure? Actually, we should be save, since no two threads should ever be on this same point on a single core processor */
-		DBGF("transaction_ready = %d", transaction_ready);
-		ret = wait_event_interruptible_timeout(wq, transaction_ready!=0, 2*BCC_PKT_TIMEOUT);
-		DBGF("transaction_ready = %d", transaction_ready);
-		DBGF("ret = %d", ret);
+	DBGF("transaction_ready = %d", transaction_ready);
+	ret = wait_event_interruptible_timeout(wq, transaction_ready!=0, 2*BCC_PKT_TIMEOUT*MAX_FAILED_PKT);
+	DBGF("transaction_ready = %d", transaction_ready);
+	DBGF("ret = %d", ret);
 
-		if (ret == 0) {
-			ERR("Transaction failed on 'send message' (Timeout).");	
-			ret = -EFAULT; 	// is there a better return value for a timeout? e.g. -EBUSY?
-		} else if (ret < 0) {
-			ERR("Transaction failed on 'send message' (Error).");
-			return -EFAULT;
-		}
-		i++;
-		transaction_ready = 0;
-	} while(ret <= 0 && i < MAX_FAILED_PKT);
+	if (ret == 0) {
+		ERR("Transaction failed on 'send message' (Timeout).");	
+		ret = -EFAULT; 	// is there a better return value for a timeout? e.g. -EBUSY?
+	} else if (ret < 0) {
+		ERR("Transaction failed on 'send message' (Error).");
+		return -EFAULT;
+	}
+	transaction_ready = 0;
 
 	return ret;
 }
