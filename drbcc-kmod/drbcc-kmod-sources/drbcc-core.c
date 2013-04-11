@@ -65,7 +65,6 @@ static struct bcc_struct _the_bcc = {
 	.response.count = 0, */
 };
 
-static unsigned char tx_buff[MSG_MAX_BUF] = { 0 };
 static uint8_t resp_cmd;
 static DEFINE_SEMAPHORE(sem_access);
 static uint8_t transaction_ready = 0; 
@@ -94,15 +93,13 @@ static int transmit_msg(struct bcc_packet *pkt)
 {
 	int pkt_len, ret = 0;
 	struct tty_struct *tty = _the_bcc.tty;
+	unsigned char tx_buff[MSG_MAX_BUF] = { 0 };
 
 	if (tty->driver && tty->driver->ops->write) {
 		memset(tx_buff, 0, (sizeof(tx_buff)/sizeof(tx_buff[0])));	
 		
 		SET_TBIT(pkt, toggle_t.tx); 
-//		pkt->cmd = ((pkt->cmd & ~TOGGLE_BITMASK) | TOGGLE_SHIFT(toggle_t.tx)); // FIXME: better macro or delete this comment
 		DBGF("toggle = %d, pkt_cmd: 0x%x\n", toggle_t.tx, pkt->cmd);
-//		DBGF("toggle = %d, pkt: 0x%x\n", toggle_t.tx, (pkt->cmd & ~TOGGLE_BITMASK) | TOGGLE_SHIFT(toggle_t.tx));
-		
 		pkt_len = serialize_packet(pkt, tx_buff);
 	
 		DBGF("%s Transmitting packet (cmd = 0x%x) through driver.\n", BCC, *(tx_buff+1));
