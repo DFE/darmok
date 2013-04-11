@@ -30,7 +30,6 @@
 extern int chrdev_open(struct inode * inode, struct file * filp);
 static struct inode ino; 
 static struct file filp;
-static struct tty_struct *ttyp;
 
 /**
 *  \struct	bcc_struct
@@ -103,8 +102,8 @@ static int transmit_msg(struct bcc_packet *pkt)
 		ret = tty->driver->ops->write(tty, tx_buff, pkt_len);
 
 // TODO: Do I need this?
-		if (ttyp->driver->ops->flush_chars)
-			ttyp->driver->ops->flush_chars(ttyp);
+		if (tty->driver->ops->flush_chars)
+			tty->driver->ops->flush_chars(tty);
 
 		DBGF("Driver returned: %d", ret);
 	} else {
@@ -433,7 +432,7 @@ int transmit_packet(struct bcc_packet * pkt, uint8_t resp_cmd)
 {
 	int ret = 0;
 
-	if (!ttyp) {
+	if (!_the_bcc.tty) {
 		DBG("DRBCC-Core not ready yet.\n");
 		return -EAGAIN;
 	}
@@ -582,11 +581,7 @@ static int bcc_open (struct tty_struct *tty)
 
 	tty->receive_room = MSG_MAX_BUF;
 	
-	/* Every entry point will now have access to our private data structure */
-	tty->disc_data = &_the_bcc;
-	/* TODO: Needed? */
 	_the_bcc.tty = tty;
-	ttyp = tty;
 
 	if (tty->driver) {
 		DBG("+++++++ driver set in tty struct. ");
@@ -602,12 +597,7 @@ static int bcc_open (struct tty_struct *tty)
 	
 	if(tty->driver == NULL) {
 		DBG("No driver set in tty");
-	} else {
-		/*DBGF("driver_name: %s, name: %s", tty->driver->ops->driver_name, tty->driver->ops->name);
-		DBGF("(type == TTY_DRIVER_TYPE_SERIAL) ? %s , (subtype == SERIAL_TYPE_NORMAL) ? %s", 
-			(tty->driver->ops->type == TTY_DRIVER_TYPE_SERIAL)?"YES":"NO", 
-			(tty->driver->ops->subtype == SERIAL_TYPE_NORMAL)?"YES":"NO"); */
-	}
+	} 
 
 /*	mutex_lock(&tty->termios_mutex);
 	if (test_and_clear_bit(TTY_THROTTLED, &tty->flags) && tty->ops->unthrottle)
@@ -629,8 +619,6 @@ static int bcc_open (struct tty_struct *tty)
 */
 void bcc_close (struct tty_struct *tty)
 {	
-	struct bcc_struct *bcc;
-	
 	DBG("Close line discipline.");
 	
 	_the_bcc.opened--;
@@ -641,21 +629,9 @@ void bcc_close (struct tty_struct *tty)
 	destroy_workqueue(_the_bcc.parser_wkq);
 	destroy_workqueue(_the_bcc.rx_wkq);
 
-/* TODO: Delete */
-	if(tty->read_buf) {	
-		kfree(tty->read_buf);
-		tty->read_buf = NULL;
-	}
-
-	bcc = (struct bcc_struct*) tty->disc_data;
-	tty->disc_data = NULL;
-	ttyp = NULL;
 	_the_bcc.tty = NULL;
 
 	DBG("Freed bcc_struct");
-	/* TFM FIXME: HACK ALERT */
-	//bcc->opened--;
-	bcc->tty = NULL;
 }
 
 /**
@@ -779,8 +755,8 @@ void __drbcc_exit(void) {
 		printk(KERN_NOTICE "DRBCC: %d open file descriptors on line discipline's serial device file.\n", _the_bcc.opened);
 
 		/* Hangup here ... */
-		tty_hangup(ttyp);		
-		ttyp->count--;
+		tty_hangup(_the_bcc.tty);		
+		_the_bcc.tty->count--;
 
 		if (0 == _the_bcc.opened)
 			break;
