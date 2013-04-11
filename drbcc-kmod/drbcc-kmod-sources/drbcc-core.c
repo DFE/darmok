@@ -167,7 +167,8 @@ static void rx_worker_thread(struct work_struct *work)
     struct bcc_packet *pkt = container_of(work, struct bcc_packet, work);
 
 	if (!pkt) {
-		printk(KERN_NOTICE "Pkt pointer was null, something went terribly wrong.\n");
+		printk(KERN_WARNING "DRBCC Packet pointer was null, something went terribly wrong!\n");
+		return;
 	}
 
 	if (l2_state == RQ_STD && CMD_WITHOUT_TBIT(pkt->cmd) == DRBCC_ACK) {
