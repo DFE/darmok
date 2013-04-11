@@ -69,9 +69,9 @@ static struct bcc_struct _the_bcc = {
 
 static unsigned char tx_buff[MSG_MAX_BUF] = { 0 };
 static uint8_t resp_cmd;
-DEFINE_SEMAPHORE(sem_access);
+static DEFINE_SEMAPHORE(sem_access);
 static uint8_t transaction_ready = 0; 
-DECLARE_WAIT_QUEUE_HEAD(wq);
+static DECLARE_WAIT_QUEUE_HEAD(wq);
 
 static struct toggle toggle_t = {
 	.rx = 1,
