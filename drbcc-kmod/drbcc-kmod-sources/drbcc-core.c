@@ -363,13 +363,13 @@ static void bcc_receive_buf(struct tty_struct *tty, const unsigned char *cp, cha
 static int synchronize(void)
 {
 	int ret = 0;
-	struct bcc_packet *pkt = &((struct bcc_packet) { 
+	struct bcc_packet pkt = { 
 		.cmd = DRBCC_SYNC | SHIFT_TBIT(1), 
-		.payloadlen = 0 });
+		.payloadlen = 0 };
 
 	
 	l2_state = RQ_STD;
-	ret = perform_transaction(pkt);
+	ret = perform_transaction(&pkt);
 	DBG("***** Transmitted sync");	
 	
 	if (ret < 0) {
