@@ -93,7 +93,7 @@ const uint8_t cmd_responses[] = {
 * Transactionbased: Request-response-logic
 * Keeps track of the toggle bits
 */
-static int perform_transaction(void);
+static int perform_transaction(struct bcc_packet *pkt);
 //static int perform_transaction_ans(void);
 
 /*
@@ -101,7 +101,7 @@ static int perform_transaction(void);
 * Parsing: char[] <==> struct bcc_struct
 */
 static int synchronize(void);
-static int transmit_msg(void);
+static int transmit_msg(struct bcc_packet *pkt);
 static void transmit_ack(void); 
 static void receive_msg(unsigned char *buf, uint8_t len);
 

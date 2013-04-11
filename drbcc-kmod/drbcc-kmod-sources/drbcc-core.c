@@ -43,9 +43,7 @@ struct bcc_struct {
 	struct semaphore	access;
 	
 	/****** For communication between Layer 1-and-2 only *****/
-	struct bcc_packet 	*curr;		/**< Pointer to packet struct we receive from the frontend drivers */
 	struct bcc_packet 	*resp;		
-	struct bcc_packet 	temp_tx;		
 	
 	struct workqueue_struct	*rx_wkq;
 	struct workqueue_struct	*parser_wkq;
@@ -92,11 +90,10 @@ static void check_unthrottle(struct tty_struct * tty)
 *
 ***********   LAYER 1  ***************
 */
-static int transmit_msg(void) 
+static int transmit_msg(struct bcc_packet *pkt) 
 {
 	int pkt_len, ret = 0;
 	struct tty_struct *tty = _the_bcc.tty;
-	struct bcc_packet *pkt = &_the_bcc.temp_tx;
 
 	if (tty->driver && tty->driver->ops->write) {
 		memset(tx_buff, 0, (sizeof(tx_buff)/sizeof(tx_buff[0])));	
@@ -381,16 +378,13 @@ static void bcc_receive_buf(struct tty_struct *tty, const unsigned char *cp, cha
 static int synchronize(void)
 {
 	int ret = 0;
-	struct bcc_packet *save = _the_bcc.curr;
-	char l2_state_save = l2_state;
-
-	_the_bcc.curr = &((struct bcc_packet) { 
+	struct bcc_packet *pkt = &((struct bcc_packet) { 
 		.cmd = DRBCC_SYNC | SHIFT_TBIT(1), 
 		.payloadlen = 0 });
 
 	
 	l2_state = RQ_STD;
-	ret = perform_transaction();
+	ret = perform_transaction(pkt);
 	DBG("***** Transmitted sync");	
 	
 	if (ret < 0) {
@@ -401,35 +395,28 @@ static int synchronize(void)
 	toggle_t.rx = 0;
 	toggle_t.tx = 0;
  	
-	DBGF("**** 1 _the_bcc.curr->cmd = 0x%x\n", _the_bcc.curr->cmd);
 	DBGF("Free pkt with adress (%p)", _the_bcc.resp);
 	kfree(_the_bcc.resp);
 	_the_bcc.resp = NULL;
-	_the_bcc.curr = save;
-	l2_state = l2_state_save;
-	DBGF("**** 2 _the_bcc.curr->cmd = 0x%x\n", _the_bcc.curr->cmd);
 	return ret;
 }
 
 #define MAX_FAILED_PKT 3
-static int perform_transaction(void) 
+static int perform_transaction(struct bcc_packet * pkt) 
 {
 	int ret = 0;
-
-
-	_the_bcc.temp_tx = *(_the_bcc.curr);
 
 	WARN_ON(transaction_ready != 0);
 	transaction_ready = 0;
 
-	ret = transmit_msg();
+	ret = transmit_msg(pkt);
 
 	if (ret < 0) {
 		DBGF("Error %d returned by transmit_msg function.", ret);
 		return ret;
 	}
 		
-	DBGF("***** Transmitted msg with cmd 0x%x \n", _the_bcc.temp_tx.cmd);	
+	DBGF("***** Transmitted msg with cmd 0x%x \n", pkt.cmd);	
 
 	DBGF("transaction_ready = %d", transaction_ready);
 	ret = wait_event_interruptible_timeout(wq, transaction_ready!=0, 2*BCC_PKT_TIMEOUT*MAX_FAILED_PKT);
@@ -481,8 +468,6 @@ int transmit_packet(struct bcc_packet * pkt, uint8_t resp_cmd)
 		}	
 	}
 
-	_the_bcc.curr = pkt;
-
 	if (resp_cmd != DRBCC_CMD_ILLEGAL) {
 		DBG("**** Send transaction and expect ans\n");
 		l2_state = RQ_STD_ANS;
@@ -490,37 +475,38 @@ int transmit_packet(struct bcc_packet * pkt, uint8_t resp_cmd)
 		DBG("**** Send transaction without to expect ans\n");
 		l2_state = RQ_STD;
 	}
-	ret = perform_transaction();
+	ret = perform_transaction(pkt);
 	DBGF("Ret: %d", ret);
 
 	// FIXME: Mean hack, because actually !(_the_bcc.resp) should be signalised by a negative ret value :(	
 	if ((ret < 0) || !(_the_bcc.resp)) {
-		printk(KERN_NOTICE "Transaction of packet with command 0x%x failed\n", _the_bcc.curr->cmd);
-		_the_bcc.curr->cmd = DRBCC_CMD_ILLEGAL;
+		printk(KERN_NOTICE "Transaction of packet with command 0x%x failed\n", pkt->cmd);
+		pkt->cmd = DRBCC_CMD_ILLEGAL;
 		goto exit;	
 	}
 	
 	if (resp_cmd == DRBCC_CMD_ILLEGAL) {
 		DBG("Expected no answer for my command. Just returning after receiving Ack.");
-		_the_bcc.curr->cmd = DRBCC_CMD_ILLEGAL;
+		pkt->cmd = DRBCC_CMD_ILLEGAL;
 		goto exit;
 	} else if (_the_bcc.resp->cmd != resp_cmd) {
 		printk(KERN_NOTICE "Received packet with wrong response command: 0x%x\n", _the_bcc.resp->cmd);
-		_the_bcc.curr->cmd = DRBCC_CMD_ILLEGAL;
+		pkt->cmd = DRBCC_CMD_ILLEGAL;
 		ret = -EFAULT; 	/* TODO: is there a better err value for this? */
 		goto exit;
 	}
 	
 // TODO: How should I signal an invalid pkt to the upper layers?
-	*(_the_bcc.curr) = *(_the_bcc.resp);
+	*pkt = *(_the_bcc.resp);
 
 /* TODO: test auf memory leak */
 	DBGF("%s: Transaction was success. Free packet with adress %p", __FUNCTION__, _the_bcc.resp);
-	kfree(_the_bcc.resp);
-	_the_bcc.resp = NULL;
 
 exit:
-	DBGF("Curr cmd: 0x%x", _the_bcc.curr->cmd);
+	if (_the_bcc.resp) {
+		kfree(_the_bcc.resp);
+		_the_bcc.resp = NULL;
+	}
 	up(&sem_access);
 	DBG("sem_access semaphore is up now");
 
