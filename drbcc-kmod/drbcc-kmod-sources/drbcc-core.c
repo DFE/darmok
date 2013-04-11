@@ -395,6 +395,7 @@ static int synchronize(void)
 	
 	if (ret < 0) {
 		DBGF("Error %d occured on sync", ret);
+		return ret;
 	}
 	
 	toggle_t.rx = 0;
@@ -415,20 +416,7 @@ static int perform_transaction(void)
 {
 	int ret = 0;
 
-	DBGF("**** _the_bcc.curr->cmd = 0x%x\n", _the_bcc.curr->cmd);
 
-	if(_the_bcc.initial) {
-		DBG("Initial call to perform transaction, therefore syncing");
-		_the_bcc.initial--;
-		ret = synchronize();
-		if (ret < 0) {
-			ERR("**** Syncing failed");
-		//	_the_bcc.initial++;
-                	return ret;
-		}	
-	}
-	
-	DBGF("**** _the_bcc.curr->cmd = 0x%x\n", _the_bcc.curr->cmd);
 	_the_bcc.temp_tx = *(_the_bcc.curr);
 
 	WARN_ON(transaction_ready != 0);
@@ -478,8 +466,20 @@ int transmit_packet(struct bcc_packet * pkt, uint8_t resp_cmd)
 	}
 
 	ret = down_interruptible(&sem_access);
+	
 	if (ret)	
 		return ret;
+	
+	if(_the_bcc.initial) {
+		DBG("Initial call to transmit_packet, therefore syncing");
+		_the_bcc.initial = 0;
+		ret = synchronize();
+		if (ret < 0) {
+			ERR("**** Syncing failed");
+			_the_bcc.initial = 1;
+                	return ret;
+		}	
+	}
 
 	_the_bcc.curr = pkt;
 
