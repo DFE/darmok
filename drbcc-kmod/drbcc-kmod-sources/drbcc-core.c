@@ -51,8 +51,6 @@ struct bcc_struct {
 	void (*async_callback) (struct bcc_packet *);
 };
 
-static struct bcc_packet *curr_pkt = NULL;
-
 static struct class *drbcc_class;
 
 static struct bcc_struct _the_bcc = {
@@ -60,9 +58,6 @@ static struct bcc_struct _the_bcc = {
 	.initial = 1,
 
 	.async_callback = NULL,
-	/* How shall this be initialised? */
-/* TODO	.access.count = 1,
-	.response.count = 0, */
 };
 
 static uint8_t resp_cmd;
@@ -100,6 +95,7 @@ static int transmit_msg(struct bcc_packet *pkt)
 		
 		SET_TBIT(pkt, toggle_t.tx); 
 		DBGF("toggle = %d, pkt_cmd: 0x%x\n", toggle_t.tx, pkt->cmd);
+		
 		pkt_len = serialize_packet(pkt, tx_buff);
 	
 		DBGF("%s Transmitting packet (cmd = 0x%x) through driver.\n", BCC, *(tx_buff+1));
@@ -251,6 +247,7 @@ static void receive_msg(unsigned char *buf, uint8_t len)
 {
 	uint8_t			readc = 0;
 	int 			ret = 0;
+	static struct bcc_packet *curr_pkt = NULL;
 
 	do {
 		if (!curr_pkt) {
@@ -269,7 +266,6 @@ static void receive_msg(unsigned char *buf, uint8_t len)
 		if(ret > 0) {
 			DBG("Succeeded parsing message to struct bcc_packet");
 		} else if(ret == -EAGAIN) {
-			//TODO: just for testing: throw away party parsed packets
 			DBG("No full packet parsed, try again later");
 			/* Throttle is still 0 here */
 	//		do_throttle(1, tty);
@@ -280,14 +276,8 @@ static void receive_msg(unsigned char *buf, uint8_t len)
 			DBGF("%s: Free packet with adress %p", __FUNCTION__, curr_pkt);
 			kfree(curr_pkt);
 			curr_pkt = NULL;
-//			return;
 			break;
 		}	
-
-		if (!curr_pkt) {
-			DBG ("curr_pkt was Null!");
-			break;
-		}
 
 		INIT_WORK(&(curr_pkt->work), rx_worker_thread);
 		queue_work(_the_bcc.rx_wkq, &curr_pkt->work);
@@ -361,7 +351,6 @@ static void bcc_receive_buf(struct tty_struct *tty, const unsigned char *cp, cha
 	    tty->driver->ops->throttle)
 		tty->driver->ops->throttle(tty);
 #endif
-	//receive_msg(newbuf, j);
 	pw->cnt = j;
 	INIT_WORK(&pw->work, parser_worker_thread);
 	queue_work(_the_bcc.parser_wkq, &pw->work);
