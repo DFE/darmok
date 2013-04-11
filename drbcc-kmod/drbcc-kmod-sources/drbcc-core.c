@@ -428,7 +428,7 @@ static int perform_transaction(struct bcc_packet * pkt)
 *	\return passed return value of called functions or 0 on failure, sent bytes on success
 */
 /* TODO: remove resp_cmd from parameter list */
-int transmit_packet(struct bcc_packet * pkt, uint8_t resp_cmd)
+int transmit_packet(struct bcc_packet * pkt)
 {
 	int ret = 0;
 

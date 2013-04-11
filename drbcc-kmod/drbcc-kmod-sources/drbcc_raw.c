@@ -197,7 +197,7 @@ ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t si
 	CMD_DEL_TBIT((&pkt));	// FIXME!!!!
 	DBGF("raw wants to send packet with cmd %d (0x%x) and to receive packet with cmd %d (0x%x)", pkt.cmd, pkt.cmd, 
 		RSP_CMD(pkt.cmd), RSP_CMD(pkt.cmd));
-	if ((ret = transmit_packet(&pkt, RSP_CMD(pkt.cmd))) < 0) {
+	if ((ret = transmit_packet(&pkt)) < 0) {
 		ERR(BRAW "Error while trying to send message.");
 		DBGF("Error code: %d", ret);
 		return -EAGAIN;

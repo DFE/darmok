@@ -52,8 +52,7 @@ int get_rtc_time(struct device *dev, struct rtc_time *rtc_tm)
 	};
 	DBG("Request time from microcontroller.");	
 		
-/* TODO: remove second parameter in transmit_packet function */
-	if ((ret = transmit_packet(&pkt, RSP_CMD(pkt.cmd))) < 0) {
+	if ((ret = transmit_packet(&pkt)) < 0) {
 		ERR(BRTC "Error while trying to send message.");
 		return -EFAULT;
 	}
@@ -109,8 +108,7 @@ int set_rtc_time(struct device *dev, struct rtc_time *rtc_tm)
 	year = 	rtc_tm->tm_year + 1900 - 2000;
 	pkt.data[YEAR] = bin2bcd(year);
 
-/* TODO: remove second parameter in transmit_packet function */
-	if ((ret = transmit_packet(&pkt, RSP_CMD(pkt.cmd))) < 0) {
+	if ((ret = transmit_packet(&pkt)) < 0) {
 		ERR(BRTC "Error while trying to send message.");
 		return -EFAULT;
 	}

@@ -83,7 +83,7 @@ struct bcc_packet {
 int serialize_packet(struct bcc_packet * pkt, unsigned char tx_buff[MSG_MAX_BUF]);
 int deserialize_packet(const unsigned char *cp, struct bcc_packet *pkt, int size);
 
-int transmit_packet(struct bcc_packet *pkt,  uint8_t resp_cmd);
+int transmit_packet(struct bcc_packet *pkt);
 int register_async_callback(void *func_ptr);
 
 int add_device_entry(struct cdev *cdev, int minor, char *dev_name);
