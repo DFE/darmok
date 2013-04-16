@@ -75,7 +75,6 @@ static struct bcc_struct _the_bcc = {
 	.async_callback = NULL,
 };
 
-static uint8_t resp_cmd;
 static DEFINE_SEMAPHORE(sem_access);
 static uint8_t transaction_ready = 0; 
 static DECLARE_WAIT_QUEUE_HEAD(wq);
@@ -444,6 +443,7 @@ static int perform_transaction(struct bcc_packet * pkt)
 /* TODO: remove resp_cmd from parameter list */
 int transmit_packet(struct bcc_packet * pkt)
 {
+	uint8_t resp_cmd;
 	int ret = 0;
 
 	if (!_the_bcc.tty) {
@@ -466,6 +466,8 @@ int transmit_packet(struct bcc_packet * pkt)
                 	return ret;
 		}	
 	}
+	
+	resp_cmd = RSP_CMD(pkt->cmd);
 
 	if (resp_cmd != DRBCC_CMD_ILLEGAL) {
 		DBG("**** Send transaction and expect ans\n");
