@@ -13,8 +13,6 @@
 /* Timeout in jiffies; here: ?00ms */
 #define BCC_PKT_TIMEOUT			HZ/2
 
-#include "drbcc_core.h"
-
 #define BCC_MAGIC			22
 #define BCC_TTY_MAJOR		123
 
