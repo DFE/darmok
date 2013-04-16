@@ -31,6 +31,22 @@ extern int chrdev_open(struct inode * inode, struct file * filp);
 static struct inode ino; 
 static struct file filp;
 
+/*
+* Layer 2 functions:
+* Transactionbased: Request-response-logic
+* Keeps track of the toggle bits
+*/
+static int perform_transaction(struct bcc_packet *pkt);
+
+/*
+* Layer 1 functions:
+* Parsing: char[] <==> struct bcc_struct
+*/
+static int synchronize(void);
+static int transmit_msg(struct bcc_packet *pkt);
+static void transmit_ack(void); 
+static void receive_msg(unsigned char *buf, uint8_t len);
+
 /**
 *  \struct	bcc_struct
 *  \brief	private data of open tty interface
