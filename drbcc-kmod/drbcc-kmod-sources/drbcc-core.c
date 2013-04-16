@@ -9,7 +9,7 @@
  *	The code can be compiled as a module or straight into the kernel.	
  */
 #include <linux/version.h>
- #include <linux/module.h>
+#include <linux/module.h>
 #include <linux/tty.h>
 #include <linux/tty_driver.h>
 #include <linux/tty_ldisc.h>
@@ -44,7 +44,7 @@ static int perform_transaction(struct bcc_packet *pkt);
 */
 static int synchronize(void);
 static int transmit_msg(struct bcc_packet *pkt);
-static void transmit_ack(void); 
+static void transmit_ack(int ack_toggle); 
 static void receive_msg(unsigned char *buf, uint8_t len);
 
 /**
@@ -132,7 +132,7 @@ static int transmit_msg(struct bcc_packet *pkt)
 }
 
 /* Why a void function? Because I don't care! */
-static void transmit_ack(void) 
+static void transmit_ack(int ack_toggle) 
 {
 	int ret = 0;
 	struct tty_struct *tty = _the_bcc.tty;
@@ -140,7 +140,7 @@ static void transmit_ack(void)
 	if (tty->driver && tty->driver->ops->write) {
 		DBGF("%s Transmitting ack through driver (toggle-bit: 0x%x).\n", BCC, toggle_t.rx);
 
-		if(toggle_t.rx) {
+		if(ack_toggle) {
 			ret = tty->driver->ops->write(tty, ACK_BUF_RX_1, 5);
 		} else {
 			ret = tty->driver->ops->write(tty, ACK_BUF_RX_0, 5);
@@ -151,17 +151,14 @@ static void transmit_ack(void)
 
 static int toggle_bit_save_rx(struct bcc_packet *pkt) {
 	if (TBIT_OF_CMD(pkt->cmd) == SHIFT_TBIT(toggle_t.rx)) {	
-		transmit_ack();
+		transmit_ack(toggle_t.rx);
 		toggle_t.rx = !toggle_t.rx;
 		DBGF("New rx_toggle: 0x%x", toggle_t.rx);
 		return 0;	
 	} else {
 		DBGF("**** Err on toggle bit (Expected: 0x%x, received: 0x%x (pkt->cmd = 0x%x))!\n", 
-			SHIFT_TBIT(toggle_t.rx), TBIT_OF_CMD(pkt->cmd), pkt->cmd);
-		// FIXME: Hack Alert!!! non-atomic toggling
-		toggle_t.rx = !toggle_t.rx;
-		transmit_ack();
-		toggle_t.rx = !toggle_t.rx;
+		SHIFT_TBIT(toggle_t.rx), TBIT_OF_CMD(pkt->cmd), pkt->cmd);
+		transmit_ack(!toggle_t.rx);
 		return -EAGAIN;
 	}
 }
