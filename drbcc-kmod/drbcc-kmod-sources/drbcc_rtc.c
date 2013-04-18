@@ -94,6 +94,9 @@ int set_rtc_time(struct device *dev, struct rtc_time *rtc_tm)
 		.payloadlen	= 0,
 	};
 
+	if(!capable(CAP_SYS_TIME)) {
+		return -EPERM;				
+	}	
 	DBG("Set RTC time through mircocontroller.");	
 
 	pkt.data[SEC] = bin2bcd(rtc_tm->tm_sec);
@@ -123,28 +126,28 @@ int set_rtc_time(struct device *dev, struct rtc_time *rtc_tm)
 
 /**
 *	Called by userspace to set and read time through a system call. 
-*	\param	inode		pointer to metadata structure of file	
-*	\param	file		structure representing open file in kernel space 
+*	\param	dev 	rtc device struct
 *	\param	cmd		system call value	
 *	\param  arg		arguments to system call	
 *	
 *	\return value passed by the tty's generic ioctl function
 */
-//static int drbcc_rtc_ioctl(struct inode *inode, struct file *file, unsigned int cmd, unsigned long arg)
 static int drbcc_rtc_ioctl(struct device *dev, unsigned int cmd, unsigned long arg)
 {
-//	int ret = 0;
-	/* TODO: if(Sig___) { ..}  */
-	printk("HydraIP DRBCC driver: %s.\n", __FUNCTION__);
+	int ret = 0;
+	DBGF("HydraIP DRBCC driver: %s.\n", __FUNCTION__);
 
 	switch(cmd) {
-		/* case RTC_RD_TIME:	// read time and date from RTC 
+		case RTC_RD_TIME:	// read time and date from RTC 
 		{
 			struct rtc_time rtc_tm;
 
 			memset(&rtc_tm, 0, sizeof(struct rtc_time));			
-			// TODO: check return value 
 			ret = get_rtc_time(NULL, &rtc_tm);
+			if (ret < 0) {
+				ERR ("Reading time from hardware RTC failed.");
+				return ret;
+				}
 			if (copy_to_user((struct rtc_time*)arg, &rtc_tm, sizeof(struct rtc_time))) {
 				ERR("Copying to user failed.");
 				return -EFAULT;
@@ -156,21 +159,18 @@ static int drbcc_rtc_ioctl(struct device *dev, unsigned int cmd, unsigned long a
 		{
 			struct rtc_time rtc_tm;
 			
-			if(!capable(CAP_SYS_TIME)) {
-				return -EPERM;				
-			}			
-
 			if(copy_from_user(&rtc_tm, (struct rtc_time*)arg, sizeof(struct rtc_time))) {
 				ERR("Copying from user failed.");
 				return -EFAULT;
 			}
-			// TODO: check return value 
 			ret = set_rtc_time(NULL, &rtc_tm);
+			if (ret < 0) {
+				ERR ("Setting time to hardware RTC failed.");
+			}
 			return ret;
-		} */
+		} 
 		default:
 		{
-			// TODO: we don't support ioctl calls?
 			DBGF("IOCTL cmd called that I didn't know: %u", cmd);
 			return -ENOIOCTLCMD;
 		}
