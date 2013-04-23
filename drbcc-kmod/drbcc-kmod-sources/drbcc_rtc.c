@@ -36,7 +36,7 @@ static struct platform_device *drbcc_rtc = NULL;
 *  \enum PKTF_t
 *  \brief mapping between postition in packet data array and signification
 */
-typedef enum { SEC, MIN, HOUR, DAY, DATE, MONTH, YEAR, EPOCH } PKTF_t;	/* Field in packet.data */
+typedef enum { SEC, MIN, HOUR, DAY, DATE, MONTH, YEAR, PAYLOAD_LEN } PKTF_t;	/* Field in packet.data */
 
 /**
 *	Get time from the board controller rtc and fill in into struct passed by hwclock or another userspace program.
@@ -90,8 +90,8 @@ int set_rtc_time(struct device *dev, struct rtc_time *rtc_tm)
 {
 	int month, year, ret = 0;
 	struct bcc_packet pkt = { 
-		.cmd 		=  DRBCC_REQ_RTC_SET,
-		.payloadlen	= 0,
+		.cmd 		= DRBCC_REQ_RTC_SET,
+		.payloadlen	= PAYLOAD_LEN,
 	};
 
 	if(!capable(CAP_SYS_TIME)) {
@@ -121,6 +121,7 @@ int set_rtc_time(struct device *dev, struct rtc_time *rtc_tm)
 		return -EFAULT;
 	}
 
+	DBG("DRBCC-RTC was set succesfully.");
 	return 0;
 }
 
