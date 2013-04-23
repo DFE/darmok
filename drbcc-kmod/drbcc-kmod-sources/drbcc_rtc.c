@@ -125,64 +125,9 @@ int set_rtc_time(struct device *dev, struct rtc_time *rtc_tm)
 	return 0;
 }
 
-/**
-*	Called by userspace to set and read time through a system call. 
-*	\param	dev 	rtc device struct
-*	\param	cmd		system call value	
-*	\param  arg		arguments to system call	
-*	
-*	\return value passed by the tty's generic ioctl function
-*/
-static int drbcc_rtc_ioctl(struct device *dev, unsigned int cmd, unsigned long arg)
-{
-	int ret = 0;
-	DBGF("HydraIP DRBCC driver: %s.\n", __FUNCTION__);
-
-	switch(cmd) {
-		case RTC_RD_TIME:	// read time and date from RTC 
-		{
-			struct rtc_time rtc_tm;
-
-			memset(&rtc_tm, 0, sizeof(struct rtc_time));			
-			ret = get_rtc_time(NULL, &rtc_tm);
-			if (ret < 0) {
-				ERR ("Reading time from hardware RTC failed.");
-				return ret;
-				}
-			if (copy_to_user((struct rtc_time*)arg, &rtc_tm, sizeof(struct rtc_time))) {
-				ERR("Copying to user failed.");
-				return -EFAULT;
-			}
-			return ret;	
-		}
-
-		case RTC_SET_TIME:	// set the RTC 
-		{
-			struct rtc_time rtc_tm;
-			
-			if(copy_from_user(&rtc_tm, (struct rtc_time*)arg, sizeof(struct rtc_time))) {
-				ERR("Copying from user failed.");
-				return -EFAULT;
-			}
-			ret = set_rtc_time(NULL, &rtc_tm);
-			if (ret < 0) {
-				ERR ("Setting time to hardware RTC failed.");
-			}
-			return ret;
-		} 
-		default:
-		{
-			DBGF("IOCTL cmd called that I didn't know: %u", cmd);
-			return -ENOIOCTLCMD;
-		}
-	}	
-
-}
-
 static const struct rtc_class_ops drbcc_rtc_ops = {
 	.read_time 	= get_rtc_time,
 	.set_time	= set_rtc_time,
-	.ioctl  	= drbcc_rtc_ioctl,
 };
 
 static int drbcc_rtc_probe(struct platform_device *plat_dev)
