@@ -414,7 +414,7 @@ static int perform_transaction(struct bcc_packet * pkt)
 		return ret;
 	}
 		
-	DBGF("***** Transmitted msg with cmd 0x%x \n", pkt.cmd);	
+	DBGF("***** Transmitted msg with cmd 0x%x \n", pkt->cmd);	
 
 	DBGF("transaction_ready = %d", transaction_ready);
 	ret = wait_event_interruptible_timeout(wq, transaction_ready!=0, 2*BCC_PKT_TIMEOUT*MAX_FAILED_PKT);
