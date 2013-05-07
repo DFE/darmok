@@ -22,4 +22,10 @@ config DARMOK_RAW
 	  Legacy driver as an interface between the old command line drbcc tool and 
 	  the serial conntect microcontroller
 
+config DARMOK_WATCHDOG
+	tristate "Watchdog device communicating with BCTRL"
+	depends on DARMOK_CORE
+	help
+      Driver for communication with the BCTRL watchdog
+
 endif # DARMOK_CORE
