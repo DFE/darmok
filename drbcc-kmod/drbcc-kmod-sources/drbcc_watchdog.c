@@ -33,8 +33,12 @@ static int wd_keepalive(void)
 	
     struct bcc_packet pkt = {
         .cmd        =  DRBCC_REQ_HEARTBEAT,
-        .payloadlen = 0,
-    };
+        .payloadlen = 2,
+    };	
+		
+	pkt.data[0] = timeout >> 8;
+	pkt.data[1] = timeout;
+	
 
     DBG(BWD "Send timeout to board controller.");
 	
@@ -57,6 +61,10 @@ static int wd_keepalive(void)
 
 static int drbcc_wd_set_timeout(int t)
 {
+/* Otherwise, what should we do with timeout = 0? */
+	if (t < 1 ||t > 0xFFFF) 
+		return -EINVAL;
+	
 	timeout = t;
 	return 0;
 }
