@@ -88,7 +88,7 @@ static long drbcc_wd_ioctl(struct file *filp, unsigned int cmd, unsigned long ar
 
 		wd_keepalive();
 
-/* Not having a break at this point is with intent */
+/* Not having a break at this point is done on purpose */
 	case WDIOC_GETTIMEOUT:
 		return put_user(timeout, (int __user *)arg);
 
