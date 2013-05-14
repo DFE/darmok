@@ -105,9 +105,9 @@ static const struct file_operations drbcc_wd_fops = {
 };
 
 static struct miscdevice drbcc_wd_miscdev = {
-        .minor          = WATCHDOG_MINOR,
-        .name           = "drbcc-watchdog",
-        .fops           = &drbcc_wd_fops,
+        .minor      = WATCHDOG_MINOR,
+        .name       = "watchdog",
+        .fops       = &drbcc_wd_fops,
 };
  
 
