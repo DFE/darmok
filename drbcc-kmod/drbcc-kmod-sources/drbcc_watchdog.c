@@ -77,7 +77,10 @@ static long drbcc_wd_ioctl(struct file *filp, unsigned int cmd, unsigned long ar
 	switch (cmd) {
 	case WDIOC_SETOPTIONS:
 
-		break;
+	case WDIOC_KEEPALIVE:
+		printk("******WDIOC_KEEPALIVE\n");
+		wd_keepalive();
+		return 0;
 
 	case WDIOC_SETTIMEOUT:
 		if (get_user(new_timeout, (int __user *)arg))	
