@@ -16,9 +16,19 @@
 
 #include "drbcc.h"
 
-#define DEFAULT_TIMEOUT 60                      /* default timeout in seconds */
-// TODO: Rly? Or rather delete it?
-static  int timeout = DEFAULT_TIMEOUT;
+#define DEFAULT_TIMEOUT 60         /* default timeout in seconds */
+#define WD_TIMEOUT_MAX 0xFFFF
+
+static uint16_t timeout = DEFAULT_TIMEOUT;
+
+static uint8_t user_wd_active;
+
+/* 
+ * When the userspace stops kicking the watchdog this kernel driver 
+ * has to take care for this, and the other way round. 
+ */
+#define us_wd_stop kernel_wd_start
+#define us_wd_start kernel_wd_stop
 
 #define BWD 		"[DRBCC-WATCHDOG] "
 
@@ -38,9 +48,8 @@ static int wd_keepalive(void)
 		
 	pkt.data[0] = timeout >> 8;
 	pkt.data[1] = timeout;
-	
 
-    DBG(BWD "Send timeout to board controller.");
+    DBGF(BWD "Send timeout to board controller (current timeout: %d).", timeout);
 	
     if ((ret = transmit_packet(&pkt)) < 0) {
         ERR(BWD "Error while trying to send heartbeat to board controller.");
@@ -62,20 +71,57 @@ static int wd_keepalive(void)
 static int drbcc_wd_set_timeout(int t)
 {
 /* Otherwise, what should we do with timeout = 0? */
-	if (t < 1 ||t > 0xFFFF) 
+	if (t < 1 || t > WD_TIMEOUT_MAX) 
 		return -EINVAL;
 	
 	timeout = t;
 	return 0;
 }
 
+static int kernel_wd_start(void)
+{
+	/* Stopping the userspace watchdog.
+ 		This means the drbcc-watchdog driver is now responsible for
+		kicking the watchdog from time to time 
+	*/
+	timeout = DEFAULT_TIMEOUT;
+	user_wd_active = 0;
+	return 0;
+}
+
+static int kernel_wd_stop(void) 
+{
+	user_wd_active = 1;
+	return 0;
+}
+
 static long drbcc_wd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) 
 {
 	int ret = -ENOTTY;
-	int new_timeout;
+	int new_timeout, options;
 
 	switch (cmd) {
 	case WDIOC_SETOPTIONS:
+		if (get_user(options, (int __user *)arg)) {
+			return -EFAULT;
+		}
+
+		if (options & WDIOS_DISABLECARD) {
+			/* The kernel drbcc watchdog is responsible 
+			 * for keeping track of the time now
+			 */
+			kernel_wd_start();
+			ret = 0;
+		}
+		if (options & WDIOS_ENABLECARD) {
+			/* The userspace wants to be responsible 
+			 * of kicking the watchdog periodically.
+			 */
+			kernel_wd_stop();
+			ret = 0;
+		}
+
+		return ret;
 
 	case WDIOC_KEEPALIVE:
 		printk("******WDIOC_KEEPALIVE\n");
@@ -102,9 +148,26 @@ static long drbcc_wd_ioctl(struct file *filp, unsigned int cmd, unsigned long ar
 	return ret;
 }
 
+
+static int drbcc_wd_open(struct inode *inode, struct file *file)
+{
+	/* FIXME: Stop automatic watchdog functionality */
+	us_wd_start();
+	return 0;
+}
+
+static int drbcc_wd_release(struct inode *inode, struct file *file)
+{
+	/* FIXME: Start automatic watchdog functionality */
+	us_wd_stop();
+	return 0;
+}
+
 static const struct file_operations drbcc_wd_fops = {
 	.owner   		= THIS_MODULE,
 	.unlocked_ioctl	= drbcc_wd_ioctl,
+	.open			= drbcc_wd_open,
+	.release		= drbcc_wd_release,
 };
 
 static struct miscdevice drbcc_wd_miscdev = {
@@ -128,7 +191,7 @@ static int __init drbcc_wd_init_module(void)
 		ERR(BWD "Cannot register miscdev on minor=%d (err=%d)\n", drbcc_wd_miscdev.minor, ret);
 	}
 
-//	TODO: DBGF("initialized. timeout=%d sec", timeout);	
+	kernel_wd_start();
 
 	return ret;
 }
@@ -137,7 +200,6 @@ static void __exit drbcc_wd_cleanup_module(void)
 {
 	DBGF("Unload HydraIP DRBCC Watchdog driver: %s.\n", __FUNCTION__);
 
-	// TODO: Stop wd ?
 	misc_deregister(&drbcc_wd_miscdev);	
 }
 
