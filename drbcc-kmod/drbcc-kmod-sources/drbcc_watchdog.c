@@ -21,6 +21,10 @@
 
 static uint16_t timeout = DEFAULT_TIMEOUT;
 
+static void wd_timer_call(unsigned long data);
+static DEFINE_TIMER(timer, wd_timer_call, 0, 0); /* timer for kicking the hw watchdog */
+static unsigned long next_heartbeat;	/* time in jiffies till next heartbeat */
+
 static uint8_t user_wd_active;
 
 /* 
@@ -68,6 +72,18 @@ static int wd_keepalive(void)
 	return ret;
 }
 
+
+static void wd_timer_call(unsigned long data)
+{
+	if (time_before(jiffies, next_heartbeat) || (!user_wd_active)) {
+		//wd_keepalive();	/* FIXME: This function may sleep through the call of transmit_pkt */
+		mod_timer(&timer, jiffies + DEFAULT_TIMEOUT*HZ);
+	} else {
+		ERR("The userspace died! Wee need a reboot!");
+	}
+}
+
+
 static int drbcc_wd_set_timeout(int t)
 {
 /* Otherwise, what should we do with timeout = 0? */
@@ -86,6 +102,7 @@ static int kernel_wd_start(void)
 	*/
 	timeout = DEFAULT_TIMEOUT;
 	user_wd_active = 0;
+	mod_timer(&timer, jiffies + DEFAULT_TIMEOUT*HZ);	 
 	return 0;
 }
 
@@ -192,6 +209,7 @@ static int __init drbcc_wd_init_module(void)
 	}
 
 	kernel_wd_start();
+	mod_timer(&timer, jiffies + DEFAULT_TIMEOUT*HZ);	
 
 	return ret;
 }
@@ -201,6 +219,7 @@ static void __exit drbcc_wd_cleanup_module(void)
 	DBGF("Unload HydraIP DRBCC Watchdog driver: %s.\n", __FUNCTION__);
 
 	misc_deregister(&drbcc_wd_miscdev);	
+	del_timer(&timer);
 }
 
 module_init(drbcc_wd_init_module);
