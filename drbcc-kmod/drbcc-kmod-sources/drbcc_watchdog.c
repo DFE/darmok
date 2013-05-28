@@ -11,19 +11,28 @@
 #include <linux/device.h>
 #include <linux/watchdog.h>
 #include <linux/fs.h>
+#include <linux/slab.h>
 #include <linux/miscdevice.h>
 #include <linux/uaccess.h> 
+#include <linux/workqueue.h>
 
 #include "drbcc.h"
 
 #define DEFAULT_TIMEOUT 60         /* default timeout in seconds */
 #define WD_TIMEOUT_MAX 0xFFFF
 
-static uint16_t timeout = DEFAULT_TIMEOUT;
+/* Function declarations */
+static int wd_keepalive(void);
+static void blocking_wd_keepalive_thread(struct work_struct *work);
 
+
+static uint16_t timeout = DEFAULT_TIMEOUT;
 static void wd_timer_call(unsigned long data);
 static DEFINE_TIMER(timer, wd_timer_call, 0, 0); /* timer for kicking the hw watchdog */
 static unsigned long next_heartbeat;	/* time in jiffies till next heartbeat */
+/* The timer calls wd_timer_call in interrupt context, which calls a blocking function */
+static struct workqueue_struct *timeout_keepalive_wq;	
+DECLARE_WORK(tm_work, blocking_wd_keepalive_thread);
 
 static uint8_t user_wd_active;
 
@@ -72,11 +81,18 @@ static int wd_keepalive(void)
 	return ret;
 }
 
+static void blocking_wd_keepalive_thread(struct work_struct *work)
+{
+	wd_keepalive();
+}
 
 static void wd_timer_call(unsigned long data)
 {
 	if (time_before(jiffies, next_heartbeat) || (!user_wd_active)) {
-		//wd_keepalive();	/* FIXME: This function may sleep through the call of transmit_pkt */
+		//wd_keepalive();	/* This function may sleep through the call of transmit_pkt */
+		//struct work_struct *tm_work = (struct work_struct *)kmalloc(sizeof(struct work_struct), GFP_KERNEL);
+		//INIT_WORK(tm_work, blocking_wd_keepalive_thread);
+		queue_work(timeout_keepalive_wq, &tm_work);
 		mod_timer(&timer, jiffies + DEFAULT_TIMEOUT*HZ);
 	} else {
 		ERR("The userspace died! Wee need a reboot!");
@@ -208,6 +224,8 @@ static int __init drbcc_wd_init_module(void)
 		ERR(BWD "Cannot register miscdev on minor=%d (err=%d)\n", drbcc_wd_miscdev.minor, ret);
 	}
 
+	timeout_keepalive_wq = create_singlethread_workqueue("timeout_blocking_keepalive_wq");
+
 	kernel_wd_start();
 	mod_timer(&timer, jiffies + DEFAULT_TIMEOUT*HZ);	
 
@@ -217,6 +235,9 @@ static int __init drbcc_wd_init_module(void)
 static void __exit drbcc_wd_cleanup_module(void) 
 {
 	DBGF("Unload HydraIP DRBCC Watchdog driver: %s.\n", __FUNCTION__);
+	
+	flush_scheduled_work();
+	destroy_workqueue(timeout_keepalive_wq);
 
 	misc_deregister(&drbcc_wd_miscdev);	
 	del_timer(&timer);
