@@ -167,6 +167,8 @@ static void parser_worker_thread(struct work_struct *work)
 	struct parse_work *pw = container_of(work, struct parse_work, work);
 
 	receive_msg(pw->buf, pw->cnt);
+
+	kfree(pw);
 }
 
 /* typedef enum {
