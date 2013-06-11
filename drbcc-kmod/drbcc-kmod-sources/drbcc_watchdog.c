@@ -144,17 +144,15 @@ static long drbcc_wd_ioctl(struct file *filp, unsigned int cmd, unsigned long ar
 			 * for keeping track of the time now
 			 */
 			kernel_wd_start();
-			ret = 0;
+			return 0;
 		}
 		if (options & WDIOS_ENABLECARD) {
 			/* The userspace wants to be responsible 
 			 * of kicking the watchdog periodically.
 			 */
 			kernel_wd_stop();
-			ret = 0;
+			return 0;
 		}
-
-		return ret;
 
 	case WDIOC_KEEPALIVE:
 		printk("******WDIOC_KEEPALIVE\n");
