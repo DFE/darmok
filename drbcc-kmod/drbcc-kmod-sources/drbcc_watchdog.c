@@ -21,7 +21,21 @@
 #define DEFAULT_TIMEOUT 60         /* default timeout in seconds */
 #define WD_TIMEOUT_MAX 0xFFFF
 
+/* These values should be altered in the config */
+#define DARMOK_WD_TIMEOUT 60
+#define WD_KEEPALIVE_TIME 30
+
+/*
+ * When the userspace stops kicking the watchdog this kernel driver
+ * has to take care for this, and the other way round.
+ */
+#define us_wd_stop kernel_wd_start
+#define us_wd_start kernel_wd_stop
+
 #define WD_MAGIC	'V'
+
+#define BWD 		"[DRBCC-WATCHDOG] "
+
 
 /* Function declarations */
 static int wd_keepalive(void);
@@ -37,15 +51,6 @@ static struct workqueue_struct *timeout_keepalive_wq;
 DECLARE_WORK(tm_work, blocking_wd_keepalive_thread);
 
 static uint8_t user_wd_active;
-
-/* 
- * When the userspace stops kicking the watchdog this kernel driver 
- * has to take care for this, and the other way round. 
- */
-#define us_wd_stop kernel_wd_start
-#define us_wd_start kernel_wd_stop
-
-#define BWD 		"[DRBCC-WATCHDOG] "
 
 /*
  * Kick the watchdog.
