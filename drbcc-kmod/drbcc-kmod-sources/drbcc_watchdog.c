@@ -163,37 +163,42 @@ static ssize_t drbcc_wd_write(struct file *file, const char __user *buf,
 
 static long drbcc_wd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) 
 {
-	int ret = -ENOTTY;
-	int new_timeout, options;
+	int new_timeout, options = timeout;
+
+	void __user *argp = (void __user *)arg;
+	int __user *p = argp;
 
 	switch (cmd) {
 	case WDIOC_SETOPTIONS:
-		if (get_user(options, (int __user *)arg)) {
+		if (get_user(options, p)) {
 			return -EFAULT;
 		}
 
-		if (options & WDIOS_DISABLECARD) {
+		switch(options) {
+		case WDIOS_DISABLECARD:
 			/* The kernel drbcc watchdog is responsible 
 			 * for keeping track of the time now
 			 */
 			kernel_wd_start();
 			return 0;
-		}
-		if (options & WDIOS_ENABLECARD) {
+
+		case WDIOS_ENABLECARD:
 			/* The userspace wants to be responsible 
 			 * of kicking the watchdog periodically.
 			 */
 			kernel_wd_stop();
 			return 0;
+
+		default:
+			return -EFAULT;
 		}
 
 	case WDIOC_KEEPALIVE:
-		printk("******WDIOC_KEEPALIVE\n");
 		wd_keepalive();
 		return 0;
 
 	case WDIOC_SETTIMEOUT:
-		if (get_user(new_timeout, (int __user *)arg))	
+		if (get_user(new_timeout, p))
 			return -EFAULT;
 		
 		if(drbcc_wd_set_timeout(new_timeout))
@@ -203,13 +208,12 @@ static long drbcc_wd_ioctl(struct file *filp, unsigned int cmd, unsigned long ar
 
 /* Not having a break at this point is done on purpose */
 	case WDIOC_GETTIMEOUT:
-		return put_user(timeout, (int __user *)arg);
+		return put_user(timeout, p);
 
 	default:
 // TODO: why this error value? 
 		return -ENOTTY;
 	}	
-	return ret;
 }
 
 
