@@ -95,14 +95,10 @@ static void blocking_wd_keepalive_thread(struct work_struct *work)
 
 static void wd_timer_call(unsigned long data)
 {
-	if (time_before(jiffies, next_heartbeat) || (!user_wd_active)) {
-		//wd_keepalive();	/* This function may sleep through the call of transmit_pkt */
-		//struct work_struct *tm_work = (struct work_struct *)kmalloc(sizeof(struct work_struct), GFP_KERNEL);
-		//INIT_WORK(tm_work, blocking_wd_keepalive_thread);
+	if (!(time_before(jiffies, next_heartbeat)) && (!user_wd_active)) {
 		queue_work(timeout_keepalive_wq, &tm_work);
-		mod_timer(&timer, jiffies + DEFAULT_TIMEOUT*HZ);
-	} else {
-		ERR("The userspace died! Wee need a reboot!");
+		next_heartbeat = jiffies + WD_KEEPALIVE_TIME*HZ;
+		mod_timer(&timer, next_heartbeat);
 	}
 }
 
@@ -110,28 +106,36 @@ static void wd_timer_call(unsigned long data)
 static int drbcc_wd_set_timeout(int t)
 {
 /* Otherwise, what should we do with timeout = 0? */
+/* Should we als send a keepalive signal after changing the timeout? */
 	if (t < 1 || t > WD_TIMEOUT_MAX) 
 		return -EINVAL;
 	
 	timeout = t;
+	DBGF("Darmok Watchdog: Set timeout to %d\n", timeout);
 	return 0;
 }
 
 static int kernel_wd_start(void)
 {
+	DBG("The Darmok Watchdog Driver starts kicking the watchdog\n");
 	/* Stopping the userspace watchdog.
  		This means the drbcc-watchdog driver is now responsible for
 		kicking the watchdog from time to time 
 	*/
 	timeout = DEFAULT_TIMEOUT;
 	user_wd_active = 0;
-	mod_timer(&timer, jiffies + DEFAULT_TIMEOUT*HZ);	 
+	wd_keepalive();
+
+	next_heartbeat = jiffies + WD_KEEPALIVE_TIME*HZ;
+	mod_timer(&timer, next_heartbeat);
 	return 0;
 }
 
 static int kernel_wd_stop(void) 
 {
 	user_wd_active = 1;
+	del_timer(&timer);
+	flush_scheduled_work();
 	return 0;
 }
 
@@ -261,9 +265,7 @@ static int __init drbcc_wd_init_module(void)
 	}
 
 	timeout_keepalive_wq = create_singlethread_workqueue("timeout_blocking_keepalive_wq");
-
 	kernel_wd_start();
-	mod_timer(&timer, jiffies + DEFAULT_TIMEOUT*HZ);	
 
 	return ret;
 }
