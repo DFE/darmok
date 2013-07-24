@@ -21,6 +21,8 @@
 #define DEFAULT_TIMEOUT 60         /* default timeout in seconds */
 #define WD_TIMEOUT_MAX 0xFFFF
 
+#define WD_MAGIC	'V'
+
 /* Function declarations */
 static int wd_keepalive(void);
 static void blocking_wd_keepalive_thread(struct work_struct *work);
@@ -128,6 +130,32 @@ static int kernel_wd_stop(void)
 	return 0;
 }
 
+/**
+ *		drbcc_wd_write - Write to watchdog device
+ *		Any character but one that is written to the watchdog device is interpreted 
+ * 		as a keepalive signal. Just a 'V' is interpreted as a stop signal.
+ */
+static ssize_t drbcc_wd_write(struct file *file, const char __user *buf,
+                            size_t count, loff_t *ppos)
+{
+	int offset;
+	char c;
+
+	if (count) {
+		wd_keepalive();
+	}
+
+	for (offset = 0; offset < count; offset++) {
+		if (get_user(c, buf + offset)) {
+			return -EFAULT;
+		}
+		if (c == WD_MAGIC)
+			kernel_wd_stop();
+	}
+
+	return count;
+}
+
 static long drbcc_wd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) 
 {
 	int ret = -ENOTTY;
@@ -196,6 +224,7 @@ static int drbcc_wd_release(struct inode *inode, struct file *file)
 
 static const struct file_operations drbcc_wd_fops = {
 	.owner   		= THIS_MODULE,
+	.write			= drbcc_wd_write,
 	.unlocked_ioctl	= drbcc_wd_ioctl,
 	.open			= drbcc_wd_open,
 	.release		= drbcc_wd_release,
