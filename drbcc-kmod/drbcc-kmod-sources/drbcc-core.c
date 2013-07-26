@@ -426,9 +426,12 @@ static int perform_transaction(struct bcc_packet * pkt)
 	if (ret == 0) {
 		ERR("Transaction failed on 'send message' (Timeout).");	
 		ret = -EFAULT; 	// is there a better return value for a timeout? e.g. -EBUSY?
-	} else if (ret < 0) {
+	} else if (ret == -ERESTARTSYS) {
+		ERR("Process was interrupted by a signal.");
+		flush_scheduled_work();
+	} else if (ret < 0) {	// Can this ever happen?
 		ERR("Transaction failed on 'send message' (Error).");
-		return -EFAULT;
+		ret = -EFAULT;
 	}
 	transaction_ready = 0;
 
@@ -483,7 +486,7 @@ int transmit_packet(struct bcc_packet * pkt)
 
 	// FIXME: Mean hack, because actually !(_the_bcc.resp) should be signalised by a negative ret value :(	
 	if ((ret < 0) || !(_the_bcc.resp)) {
-		printk(KERN_NOTICE "Transaction of packet with command 0x%x failed\n", pkt->cmd);
+		printk(KERN_NOTICE "Transaction of packet with command 0x%x failed with error value %x\n", pkt->cmd, ret);
 		pkt->cmd = DRBCC_CMD_ILLEGAL;
 		goto exit;	
 	}
