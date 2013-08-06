@@ -116,7 +116,7 @@ start:
 	}
 
 	if(!t_size)	
-		return size;
+		return -EAGAIN;
 
 	if(pkt->curr_idx == 1) {
 		t_size -= bcc_unesc_byte(&p, &pkt->cmd);
@@ -125,7 +125,7 @@ start:
 	}
 	
 	if(!t_size)	
-		return size;
+		return -EAGAIN;
 
 /* 	Chars you will find in each message:
 *	Two bytes (one start and one stop char), one char for command, two chars for the CRC 
