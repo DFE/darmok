@@ -365,6 +365,11 @@ static void bcc_receive_buf(struct tty_struct *tty, const unsigned char *cp, cha
 	    tty->driver->ops->throttle)
 		tty->driver->ops->throttle(tty);
 #endif
+	if (j == 0) {
+		DBG("No bytes to parse");
+		return;
+	}
+
 	pw->cnt = j;
 	INIT_WORK(&pw->work, parser_worker_thread);
 	queue_work(_the_bcc.parser_wkq, &pw->work);
