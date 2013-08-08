@@ -1,0 +1,132 @@
+From 0ea5e44beb7675436087db86650489cbdba4bcbb Mon Sep 17 00:00:00 2001
+From: Mario Schuknecht <mario.schuknecht@dresearch-fe.de>
+Date: Thu, 8 Aug 2013 09:21:37 +0200
+Subject: [PATCH] Inject N_BCC into standard Linux kernel code
+
+Signed-off-by: Christina Quast <chrysh.ng+github@gmail.com>
+Signed-off-by: Mario Schuknecht <mario.schuknecht@dresearch-fe.de>
+---
+ drivers/Kconfig         |    2 ++
+ drivers/Makefile        |    1 +
+ drivers/tty/tty_io.c    |   15 ++++++++++++++-
+ drivers/tty/tty_ldisc.c |    8 ++++++--
+ fs/char_dev.c           |    3 ++-
+ include/linux/tty.h     |    3 ++-
+ 6 files changed, 27 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/Kconfig b/drivers/Kconfig
+index d236aef..dad87d1 100644
+--- a/drivers/Kconfig
++++ b/drivers/Kconfig
+@@ -104,6 +104,8 @@ source "drivers/edac/Kconfig"
+ 
+ source "drivers/rtc/Kconfig"
+ 
++source "drivers/darmok/Kconfig"
++
+ source "drivers/dma/Kconfig"
+ 
+ source "drivers/dca/Kconfig"
+diff --git a/drivers/Makefile b/drivers/Makefile
+index 95952c8..4019f79 100644
+--- a/drivers/Makefile
++++ b/drivers/Makefile
+@@ -79,6 +79,7 @@ obj-$(CONFIG_GAMEPORT)		+= input/gameport/
+ obj-$(CONFIG_INPUT)		+= input/
+ obj-$(CONFIG_I2O)		+= message/
+ obj-$(CONFIG_RTC_LIB)		+= rtc/
++obj-$(CONFIG_DARMOK_CORE)	+= darmok/
+ obj-y				+= i2c/ media/
+ obj-$(CONFIG_PPS)		+= pps/
+ obj-$(CONFIG_PTP_1588_CLOCK)	+= ptp/
+diff --git a/drivers/tty/tty_io.c b/drivers/tty/tty_io.c
+index d939bd7..5550a70 100644
+--- a/drivers/tty/tty_io.c
++++ b/drivers/tty/tty_io.c
+@@ -2924,7 +2924,20 @@ void initialize_tty_struct(struct tty_struct *tty,
+ 	memset(tty, 0, sizeof(struct tty_struct));
+ 	kref_init(&tty->kref);
+ 	tty->magic = TTY_MAGIC;
+-	tty_ldisc_init(tty);
++#ifdef CONFIG_DARMOK_CORE
++	if (!strcmp(driver->name, "ttyUSB") && ((idx + driver->name_base) == 1)) {
++		printk(KERN_DEBUG "Add ldisc N_BCC to drv_name = %s, %s%d, (MAJ: %d, MIN: %d)\n", 
++				driver->driver_name, driver->name, idx+driver->name_base, MAJOR(driver->cdev.dev), MINOR(driver->cdev.dev));
++		tty_ldisc_init(tty, N_BCC);                       
++	} else {                                                                    
++		tty_ldisc_init(tty, N_TTY);                       
++		printk(KERN_DEBUG "Add ldisc N_TTY to drv_name = %s, %s%d, (MAJ: %d, MIN: %d)\n", 
++				driver->driver_name, driver->name, idx+driver->name_base, MAJOR(driver->cdev.dev), MINOR(driver->cdev.dev));
++	}                                                                           
++#else                                                                               
++	tty_ldisc_init(tty, N_TTY);	
++#endif   	
++
+ 	tty->session = NULL;
+ 	tty->pgrp = NULL;
+ 	tty->overrun_time = jiffies;
+diff --git a/drivers/tty/tty_ldisc.c b/drivers/tty/tty_ldisc.c
+index 24b95db..a53975e 100644
+--- a/drivers/tty/tty_ldisc.c
++++ b/drivers/tty/tty_ldisc.c
+@@ -945,9 +945,13 @@ void tty_ldisc_release(struct tty_struct *tty, struct tty_struct *o_tty)
+  *	the tty structure is not completely set up when this call is made.
+  */
+ 
+-void tty_ldisc_init(struct tty_struct *tty)
++void tty_ldisc_init(struct tty_struct *tty, int disc)
+ {
+-	struct tty_ldisc *ld = tty_ldisc_get(N_TTY);
++	struct tty_ldisc *ld;
++	if (disc < N_TTY || disc >= NR_LDISCS)
++		panic("tty_ldisc: Unknown Ldisc");
++		
++	ld = tty_ldisc_get(disc);	
+ 	if (IS_ERR(ld))
+ 		panic("n_tty: init_tty");
+ 	tty_ldisc_assign(tty, ld);
+diff --git a/fs/char_dev.c b/fs/char_dev.c
+index 3f152b9..e9e24f4 100644
+--- a/fs/char_dev.c
++++ b/fs/char_dev.c
+@@ -366,7 +366,7 @@ void cdev_put(struct cdev *p)
+ /*
+  * Called every time a character special file is opened
+  */
+-static int chrdev_open(struct inode *inode, struct file *filp)
++int chrdev_open(struct inode *inode, struct file *filp)
+ {
+ 	struct cdev *p;
+ 	struct cdev *new = NULL;
+@@ -567,6 +567,7 @@ EXPORT_SYMBOL(register_chrdev_region);
+ EXPORT_SYMBOL(unregister_chrdev_region);
+ EXPORT_SYMBOL(alloc_chrdev_region);
+ EXPORT_SYMBOL(cdev_init);
++EXPORT_SYMBOL(chrdev_open);
+ EXPORT_SYMBOL(cdev_alloc);
+ EXPORT_SYMBOL(cdev_del);
+ EXPORT_SYMBOL(cdev_add);
+diff --git a/include/linux/tty.h b/include/linux/tty.h
+index 9f47ab5..49a0ea5 100644
+--- a/include/linux/tty.h
++++ b/include/linux/tty.h
+@@ -34,6 +34,7 @@
+ #define N_TI_WL		22	/* for TI's WL BT, FM, GPS combo chips */
+ #define N_TRACESINK	23	/* Trace data routing for MIPI P1149.7 */
+ #define N_TRACEROUTER	24	/* Trace data routing for MIPI P1149.7 */
++#define N_BCC		25	/* for serial board controller communication */
+ 
+ #ifdef __KERNEL__
+ #include <linux/fs.h>
+@@ -533,7 +534,7 @@ extern int tty_unregister_ldisc(int disc);
+ extern int tty_set_ldisc(struct tty_struct *tty, int ldisc);
+ extern int tty_ldisc_setup(struct tty_struct *tty, struct tty_struct *o_tty);
+ extern void tty_ldisc_release(struct tty_struct *tty, struct tty_struct *o_tty);
+-extern void tty_ldisc_init(struct tty_struct *tty);
++extern void tty_ldisc_init(struct tty_struct *tty, int disc);
+ extern void tty_ldisc_deinit(struct tty_struct *tty);
+ extern void tty_ldisc_begin(void);
+ /* This last one is just for the tty layer internals and shouldn't be used elsewhere */
+-- 
+1.7.9.5
+
