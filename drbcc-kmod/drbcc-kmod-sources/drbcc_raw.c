@@ -1,11 +1,11 @@
 /** 
-*   \file 	drbcc_raw.c	
-*   \brief	compatibility module converting userspace requests to board controller packet struct 	
-*   \author 	Christina Quast
-*
-* (C) 2009 DResearch Digital Media Systems GmbH
-*
-*/
+ *  \file 	drbcc_raw.c	
+ *  \brief	compatibility module converting userspace requests to board controller packet struct 	
+ *  \author 	Christina Quast
+ *
+ * (C) 2009 DResearch Digital Media Systems GmbH
+ *
+ */
 #include <linux/version.h>
 #include <linux/module.h>
 #include <linux/fs.h>
@@ -37,13 +37,13 @@ static struct toggle toggle_t = {
 #define ACK_BUF_BY_TBIT(t) (t==0)?(&(ACK_BUF_RX_0)):(&(ACK_BUF_RX_1))
 
 /* Note: Callback Method for asynchronous messages should kfree
-* retrieved memory
-*/
+ * retrieved memory
+ */
 void drbcc_rcv_msg_async(struct bcc_packet *pkt)
 {
 	unsigned char buf[MSG_MAX_BUF];
 	int ret;
-	
+
 	pkt->cmd |= SHIFT_TBIT(toggle_t.rx);
 
 	ret = serialize_packet(pkt, buf);
@@ -56,23 +56,23 @@ void drbcc_rcv_msg_async(struct bcc_packet *pkt)
 }
 
 /**
-*	Called on open call on device file. Does the initialization work for the drbcc-raw device. 
-*	\param 	ino	struct representing the file's inode entry in file system
-*	\param 	file 	struct representing file with it's current state
-*	\return 0 on success, -EAGAIN if allocating memory for fifo buffer failed 	
-*/
+ *	Called on open call on device file. Does the initialization work for the drbcc-raw device. 
+ *	\param 	ino	struct representing the file's inode entry in file system
+ *	\param 	file 	struct representing file with it's current state
+ *	\return 0 on success, -EAGAIN if allocating memory for fifo buffer failed 	
+ */
 int drbcc_raw_open(struct inode * ino, struct file * file) {	
 	register_async_callback(drbcc_rcv_msg_async);
-	
+
 	return 0;
 }
 
 /**
-*	Do cleanup on close call on device file.
-*	\param 	ino	struct representing the file's inode entry in file system
-*	\param 	file 	struct representing file with it's current state
-*	\return negative error value if fifo buffer in private data pointer was null, 0 else
-*/
+ *	Do cleanup on close call on device file.
+ *	\param 	ino	struct representing the file's inode entry in file system
+ *	\param 	file 	struct representing file with it's current state
+ *	\return negative error value if fifo buffer in private data pointer was null, 0 else
+ */
 int drbcc_raw_close(struct inode * inode, struct file * file)
 {
 	register_async_callback(NULL);	// Unregister callback method
@@ -83,13 +83,13 @@ int drbcc_raw_close(struct inode * inode, struct file * file)
 }
 
 /**
-*	Passes data read from drbcc_core as buffer to userspace.
-*	\param 	file 	struct representing file with it's current state
-*	\param	user	pointer to userspace buffer
-*	\param	num1	maximum bytes to fill into buffer	
-*	\param	loff	file offset where to start reading from	
-*	\return negative error value on failure retrieving data from fifo, bytes copied to userspace on success 
-*/
+ *	Passes data read from drbcc_core as buffer to userspace.
+ *	\param 	file 	struct representing file with it's current state
+ *	\param	user	pointer to userspace buffer
+ *	\param	num1	maximum bytes to fill into buffer	
+ *	\param	loff	file offset where to start reading from	
+ *	\return negative error value on failure retrieving data from fifo, bytes copied to userspace on success 
+ */
 ssize_t drbcc_raw_read(struct file * file, char __user * user, size_t num1, loff_t * loff) {
 	size_t ret = 0;
 	size_t count = 0;
@@ -112,7 +112,7 @@ ssize_t drbcc_raw_read(struct file * file, char __user * user, size_t num1, loff
 		ret = -EFAULT;
 		goto out;
 	}
-	
+
 	DBGF("kfifo_Get returned: %d.", ret);
 
 	if (copy_to_user(user, local_buf, ret)) {
@@ -122,33 +122,33 @@ ssize_t drbcc_raw_read(struct file * file, char __user * user, size_t num1, loff
 	}	
 	ret = count;
 	kfifo_reset(&fifo);
-	
-  out:
+
+out:
 	return ret;
 }
 
 /**
-*	Transforms data buffer into drbcc message struct and passes data to drbcc_core to send through serial driver.
-*	Fills ACK messages and result of the request into local fifo buffer.
-*	\param 	file 	struct representing file with it's current state
-*	\param	user	pointer to userspace buffer
-*	\param	num1	maximum bytes to fill into buffer	
-*	\param	loff_t	file offset where to start reading from	
-*	\return negative error on failure, 0 otherwise 
-*/
+ *	Transforms data buffer into drbcc message struct and passes data to drbcc_core to send through serial driver.
+ *	Fills ACK messages and result of the request into local fifo buffer.
+ *	\param 	file 	struct representing file with it's current state
+ *	\param	user	pointer to userspace buffer
+ *	\param	num1	maximum bytes to fill into buffer	
+ *	\param	loff_t	file offset where to start reading from	
+ *	\return negative error on failure, 0 otherwise 
+ */
 
 ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t size, loff_t * loff) {
 	struct bcc_packet pkt = { 0 };
 	int ret = 0;
 	unsigned char buf[MSG_MAX_BUF];
- 	
+
 	DBGF("HydraIP DRBCC driver: %s.\n", __FUNCTION__);
 
 	if ( size > MSG_MAX_BUF ) {
 		ERR(BRAW "Can't send message that is bigger than maximal message size.");	
 		return -EFAULT;
 	}
-	
+
 	if ((ret = copy_from_user(&buf, user, size))) {
 		ERR("Copying data from user failed: %d not copied.\n", ret);
 		return -EFAULT;
@@ -161,14 +161,14 @@ ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t si
 		ERR("Deserializing packet failed because errno 0x%x", ret);
 		return -EFAULT;
 	}
-	
+
 
 	if(((CMD_WITHOUT_TBIT(pkt.cmd) == DRBCC_ACK) && (TBIT_OF_CMD(pkt.cmd) == SHIFT_TBIT(toggle_t.rx))) || (CMD_WITHOUT_TBIT(pkt.cmd) == DRBCC_SYNC_ANSWER)) {
 		DBG("Received ACK message.");
 		toggle_t.rx = !toggle_t.rx;
 		return size;
 	}
-	
+
 	if(pkt.cmd == (DRBCC_SYNC | TOGGLE_BITMASK)) {
 		DBG("Received SYNC message.");
 		if (kfifo_in_spinlocked(&fifo, &(ACK_BUF_RX_1), ACK_LEN, &spin) < ACK_LEN) {
@@ -196,7 +196,7 @@ ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t si
 
 	CMD_DEL_TBIT((&pkt));	// FIXME!!!!
 	DBGF("raw wants to send packet with cmd %d (0x%x) and to receive packet with cmd %d (0x%x)", pkt.cmd, pkt.cmd, 
-		RSP_CMD(pkt.cmd), RSP_CMD(pkt.cmd));
+			RSP_CMD(pkt.cmd), RSP_CMD(pkt.cmd));
 	if ((ret = transmit_packet(&pkt)) < 0) {
 		ERR(BRAW "Error while trying to send message.");
 		DBGF("Error code: %d", ret);
@@ -266,7 +266,7 @@ int drbcc_raw_init_module(void) {
 
 void drbcc_raw_cleanup_module(void) {
 	DBGF("Unload HydraIP DRBCC RAW driver: %s.\n", __FUNCTION__);
-	
+
 	kfifo_free(&fifo);
 
 	cdev_del(&cdev);

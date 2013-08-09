@@ -1,14 +1,14 @@
 /** \file 	drbcc.h	
-*   \brief	header file with definitions for drbcc device driver functionality
-*   \author 	Christina Quast
-*
-*	Includes packet structure for board controller message represenation,
-*	request-response-mapping, toggle bit state machine, various time and 
-*	length defines.
-*
-* (C) 2009 DResearch Digital Media Systems GmbH
-*
-*/
+ *  \brief	header file with definitions for drbcc device driver functionality
+ *  \author 	Christina Quast
+ *
+ *	Includes packet structure for board controller message represenation,
+ *	request-response-mapping, toggle bit state machine, various time and 
+ *	length defines.
+ *
+ * (C) 2009 DResearch Digital Media Systems GmbH
+ *
+ */
 #ifndef __DRBCC_H__
 #define __DRBCC_H__
 
@@ -45,9 +45,9 @@
 #define TBIT_OF_CMD(cmd) (cmd & TOGGLE_BITMASK)
 
 /**
-*  \struct	toggle
-*  \brief	state machine for one bit sequence number in both directions (receive and transmit)
-*/
+ *  \struct	toggle
+ *  \brief	state machine for one bit sequence number in both directions (receive and transmit)
+ */
 struct toggle {
 	uint8_t rx;	/**< current toggle bit of packets to be received */
 	uint8_t tx;	/**< current toggle bit of packets to be transmitted */
@@ -56,16 +56,16 @@ struct toggle {
 extern const uint8_t cmd_responses[];
 #define RSP_CMD(cmd)		(cmd_responses[(cmd & ~TOGGLE_BITMASK)])
 /* How-To on using the enum above us
-* DRBCC_COMMANDS_t cmd 	   = DRBCC_OXE_BOOT_MODE_SELECT_REQ,
-*		 response  = cmd_responses[cmd];
-*/
+ * DRBCC_COMMANDS_t cmd 	   = DRBCC_OXE_BOOT_MODE_SELECT_REQ,
+ *		 response  = cmd_responses[cmd];
+ */
 
 
 /**
-*  \struct	bcc_packet
-*  \brief	board controller message struct
-*  \note	data buffer should initially be filled with zeors
-*/
+ *  \struct	bcc_packet
+ *  \brief	board controller message struct
+ *  \note	data buffer should initially be filled with zeors
+ */
 /* FIXME: integrate pkt_len into struct, because it's safer than checking for NULL reference */
 struct bcc_packet {
 	uint8_t cmd;						/**< message type */
@@ -73,7 +73,7 @@ struct bcc_packet {
 	unsigned char data[MSG_MAX_LEN-MSG_MIN_LEN];		/**< data array of packet */
 	uint8_t payloadlen;					/**< number of data bytes in data array */
 
-        /* Used in serialize and deserialize functions */
+	/* Used in serialize and deserialize functions */
 	uint8_t curr_idx;					/**< current position pointer in the process of parsing  */
 	uint16_t crc; /* TODO: default should be 0*/
 

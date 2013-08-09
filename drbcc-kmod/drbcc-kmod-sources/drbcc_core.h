@@ -1,10 +1,10 @@
 /** \file 	drbcc_core.h	
-*   \brief	hidden header file with definitions for drbcc core
-*   \author 	Christina Quast
-*
-* (C) 2013 DResearch Digital Media Systems GmbH
-*
-*/
+ *  \brief	hidden header file with definitions for drbcc core
+ *  \author 	Christina Quast
+ *
+ * (C) 2013 DResearch Digital Media Systems GmbH
+ *
+ */
 #ifndef __DRBCC_CORE_H__
 #define __DRBCC_CORE_H__
 
@@ -81,7 +81,7 @@ const uint8_t cmd_responses[] = {
 	[DRBCC_REQ_DEBUG_SET]			= DRBCC_CMD_ILLEGAL,			/* 51 */ 
 	[DRBCC_REQ_DEBUG_GET]			= DRBCC_IND_DEBUG_GET,			/* 52 */
 	[DRBCC_SYNC_CMD_ERROR]			= DRBCC_CMD_ILLEGAL,			/* 127 */ /* Or what should be done here? */
- 
+
 
 	[54 ... 126] 				= DRBCC_CMD_ILLEGAL,
 };

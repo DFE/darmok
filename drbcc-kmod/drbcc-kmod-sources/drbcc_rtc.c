@@ -1,11 +1,11 @@
 /** 
-*   \file 	drbcc_rtc.c	
-*   \brief	module converting time between userspace rtc representation and board controller packet struct 	
-*   \author 	Christina Quast
-*
-* (C) 2009 DResearch Digital Media Systems GmbH
-*
-*/
+ *  \file 	drbcc_rtc.c	
+ *  \brief	module converting time between userspace rtc representation and board controller packet struct 	
+ *  \author 	Christina Quast
+ *
+ * (C) 2009 DResearch Digital Media Systems GmbH
+ *
+ */
 #include <linux/version.h>
 #include <linux/module.h>
 #include <linux/fs.h>
@@ -33,16 +33,16 @@ static struct platform_device *drbcc_rtc = NULL;
 
 /* RTC packet response format: <mid> <sec> <min> <hour> <day> <date> <month> <year> <epoch> */
 /**
-*  \enum PKTF_t
-*  \brief mapping between postition in packet data array and signification
-*/
+ *  \enum PKTF_t
+ *  \brief mapping between postition in packet data array and signification
+ */
 typedef enum { SEC, MIN, HOUR, DAY, DATE, MONTH, YEAR, PAYLOAD_LEN } PKTF_t;	/* Field in packet.data */
 
 /**
-*	Get time from the board controller rtc and fill in into struct passed by hwclock or another userspace program.
-*	\param	rtc_tm		struct representing time
-*	\return negative value on failure, 0 on success 
-*/
+ *	Get time from the board controller rtc and fill in into struct passed by hwclock or another userspace program.
+ *	\param	rtc_tm		struct representing time
+ *	\return negative value on failure, 0 on success 
+ */
 int get_rtc_time(struct device *dev, struct rtc_time *rtc_tm)
 {
 	int ret = 0;
@@ -51,7 +51,7 @@ int get_rtc_time(struct device *dev, struct rtc_time *rtc_tm)
 		.payloadlen	= 0,
 	};
 	DBG("Request time from microcontroller.");	
-		
+
 	if ((ret = transmit_packet(&pkt)) < 0) {
 		ERR(BRTC "Error while trying to send message.");
 		return -EFAULT;
@@ -73,19 +73,19 @@ int get_rtc_time(struct device *dev, struct rtc_time *rtc_tm)
 	rtc_tm->tm_mday = bcd2bin(pkt.data[DATE]);
 	rtc_tm->tm_mon = bcd2bin(pkt.data[MONTH]) - 1; 
 	rtc_tm->tm_year = bcd2bin(pkt.data[YEAR]) + 2000 - 1900;  
-/* TODO: epoch?? */
+	/* TODO: epoch?? */
 
 	DBGF("______%d %d %d %d %d %d______", rtc_tm->tm_sec, rtc_tm->tm_min, rtc_tm->tm_hour,
-		rtc_tm->tm_mday, rtc_tm->tm_mon, rtc_tm->tm_year);
-	
+			rtc_tm->tm_mday, rtc_tm->tm_mon, rtc_tm->tm_year);
+
 	return 0;
 }
 
 /**
-*	Set time passed by hwclock or another userspace program and set it in the board controller rtc
-*	\param	rtc_tm		struct representing time
-*	\return negative value on failure, 0 on success 
-*/
+ *	Set time passed by hwclock or another userspace program and set it in the board controller rtc
+ *	\param	rtc_tm		struct representing time
+ *	\return negative value on failure, 0 on success 
+ */
 int set_rtc_time(struct device *dev, struct rtc_time *rtc_tm)
 {
 	int month, year, ret = 0;
@@ -104,10 +104,10 @@ int set_rtc_time(struct device *dev, struct rtc_time *rtc_tm)
 	pkt.data[HOUR] = bin2bcd(rtc_tm->tm_hour);
 	pkt.data[DAY] = bin2bcd(rtc_tm->tm_wday);
 	pkt.data[DATE] = bin2bcd(rtc_tm->tm_mday);
-	
+
 	month = rtc_tm->tm_mon+1;
 	pkt.data[MONTH] = bin2bcd(month);
-	
+
 	year = 	rtc_tm->tm_year + 1900 - 2000;
 	pkt.data[YEAR] = bin2bcd(year);
 
@@ -135,13 +135,13 @@ static int drbcc_rtc_probe(struct platform_device *plat_dev)
 	int ret = 0;
 	struct rtc_device *rtc;
 
-        rtc = rtc_device_register(MODULE_NAME, &plat_dev->dev, &drbcc_rtc_ops, THIS_MODULE);
-        if (IS_ERR(rtc)) {
+	rtc = rtc_device_register(MODULE_NAME, &plat_dev->dev, &drbcc_rtc_ops, THIS_MODULE);
+	if (IS_ERR(rtc)) {
 		printk(KERN_INFO "Failed to register RTC %s\n", MODULE_NAME);
-                ret = PTR_ERR(rtc);
-                return ret;
-        }
-	
+		ret = PTR_ERR(rtc);
+		return ret;
+	}
+
 	platform_set_drvdata(plat_dev, rtc);	
 
 	return ret;
@@ -158,12 +158,12 @@ static int __devexit drbcc_rtc_remove(struct platform_device *plat_dev)
 
 
 static struct platform_driver drbcc_rtc_drv = {
-        .probe  = drbcc_rtc_probe,
-        .remove = __devexit_p(drbcc_rtc_remove),
-        .driver = {	
-                .name = MODULE_NAME,
-                .owner = THIS_MODULE,
-        },
+	.probe  = drbcc_rtc_probe,
+	.remove = __devexit_p(drbcc_rtc_remove),
+	.driver = {	
+		.name = MODULE_NAME,
+		.owner = THIS_MODULE,
+	},
 };
 
 static int __init drbcc_rtc_init_module(void) {
@@ -174,7 +174,7 @@ static int __init drbcc_rtc_init_module(void) {
 	if((ret = platform_driver_register(&drbcc_rtc_drv))) {
 		return ret;
 	}
-	
+
 	if((drbcc_rtc = platform_device_alloc(MODULE_NAME, 0)) == NULL) {
 		ret = -ENOMEM;
 		goto exit_driver_unregister;
