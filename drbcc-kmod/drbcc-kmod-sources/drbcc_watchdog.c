@@ -3,7 +3,7 @@
  *  \brief	DRBCC Watchdog implementation, depends on the DRBCC CORE functionality/module
  *  \author 	Christina Quast
  *
- * (C) 2013 DResearch Digital Media Systems GmbH
+ * (C) 2013 DResearch Fahrzeugelektronik GmbH
  *
  */
 #include <linux/version.h>
@@ -281,6 +281,6 @@ static void __exit drbcc_wd_cleanup_module(void)
 
 module_init(drbcc_wd_init_module);
 module_exit(drbcc_wd_cleanup_module);
-MODULE_AUTHOR("Christina Quast");
+MODULE_AUTHOR("DResearch Fahrzeugelektronik GmbH");
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("DRBCC Watchdog driver");

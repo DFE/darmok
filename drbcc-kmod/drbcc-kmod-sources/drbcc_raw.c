@@ -3,7 +3,7 @@
  *  \brief	compatibility module converting userspace requests to board controller packet struct 	
  *  \author 	Christina Quast
  *
- * (C) 2009 DResearch Digital Media Systems GmbH
+ * (C) 2013 DResearch Fahrzeugelektronik GmbH
  *
  */
 #include <linux/version.h>
@@ -277,6 +277,6 @@ void drbcc_raw_cleanup_module(void) {
 
 module_init(drbcc_raw_init_module);
 module_exit(drbcc_raw_cleanup_module);
-MODULE_AUTHOR("Christina Quast");
+MODULE_AUTHOR("DResearch Fahrzeugelektronik GmbH");
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("DRBCC RAW driver");

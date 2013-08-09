@@ -3,7 +3,7 @@
  *  \brief	module converting time between userspace rtc representation and board controller packet struct 	
  *  \author 	Christina Quast
  *
- * (C) 2009 DResearch Digital Media Systems GmbH
+ * (C) 2013 DResearch Fahrzeugelektronik GmbH
  *
  */
 #include <linux/version.h>
@@ -206,6 +206,6 @@ static void __exit drbcc_rtc_cleanup_module(void) {
 
 module_init(drbcc_rtc_init_module);
 module_exit(drbcc_rtc_cleanup_module);
-MODULE_AUTHOR("Christina Quast");
+MODULE_AUTHOR("DResearch Fahrzeugelektronik GmbH");
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("DRBCC RTC driver");

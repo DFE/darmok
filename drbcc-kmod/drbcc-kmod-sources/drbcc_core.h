@@ -2,7 +2,7 @@
  *  \brief	hidden header file with definitions for drbcc core
  *  \author 	Christina Quast
  *
- * (C) 2013 DResearch Digital Media Systems GmbH
+ * (C) 2013 DResearch Fahrzeugelektronik GmbH
  *
  */
 #ifndef __DRBCC_CORE_H__

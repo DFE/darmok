@@ -808,7 +808,7 @@ static void __exit drbcc_exit(void) {
 	__drbcc_exit();
 }
 
-MODULE_AUTHOR("Christina Quast <christina.dresearch@googlemail.com>");
+MODULE_AUTHOR("DResearch Fahrzeugelektronik GmbH");
 MODULE_DESCRIPTION("HydraIP DRBCC driver");
 MODULE_LICENSE("GPL");
 

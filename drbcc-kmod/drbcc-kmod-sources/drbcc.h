@@ -6,7 +6,7 @@
  *	request-response-mapping, toggle bit state machine, various time and 
  *	length defines.
  *
- * (C) 2009 DResearch Digital Media Systems GmbH
+ * (C) 2013 DResearch Fahrzeugelektronik GmbH 
  *
  */
 #ifndef __DRBCC_H__
