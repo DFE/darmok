@@ -86,7 +86,7 @@ static int get_rtc_time(struct device *dev, struct rtc_time *rtc_tm)
  *	\param	rtc_tm		struct representing time
  *	\return negative value on failure, 0 on success 
  */
-int set_rtc_time(struct device *dev, struct rtc_time *rtc_tm)
+static int set_rtc_time(struct device *dev, struct rtc_time *rtc_tm)
 {
 	int month, year, ret = 0;
 	struct bcc_packet pkt = { 
