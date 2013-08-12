@@ -84,16 +84,6 @@ static struct toggle toggle_t = {
 	.tx = 1,
 };
 
-#ifdef DRIVER_THROTTLING
-/* FIXME: rewrite code? copied from drivers/char/n_tty.c */
-static void check_unthrottle(struct tty_struct * tty)
-{
-	if (tty->count &&
-			test_and_clear_bit(TTY_THROTTLED, &tty->flags) && 
-			tty->driver->ops->unthrottle)
-		tty->driver->ops->unthrottle(tty);
-}
-#endif
 /*
  *
  ***********   LAYER 1  ***************
@@ -281,9 +271,6 @@ static void receive_msg(unsigned char *buf, uint8_t len)
 			DBG("Succeeded parsing message to struct bcc_packet");
 		} else if(ret == -EAGAIN) {
 			DBG("No full packet parsed, try again later");
-			/* Throttle is still 0 here */
-			//		do_throttle(1, tty);
-			// FIXME: potential memory leak because I never free partly parsed packet when I don't encounter stop char
 			break;
 		} else if(ret < 0) {
 			DBG("Failure while parsing packet.");
@@ -303,10 +290,6 @@ static void receive_msg(unsigned char *buf, uint8_t len)
 		schedule();
 
 	} while(readc < len); 
-
-#ifdef DRIVER_THROTTLING
-	check_unthrottle(_the_bcc.tty);
-#endif
 }
 
 /*	Possible buffers that can be received:
@@ -351,7 +334,6 @@ static void bcc_receive_buf(struct tty_struct *tty, const unsigned char *cp, cha
 				break;
 			case TTY_OVERRUN:
 				DBG("TTY-Overun occured");
-				//			do_throttle(1, tty);
 				break;	
 			default:
 				DBGF("Flags at nr. %d was: 0x%x", count-i, flags);
@@ -360,11 +342,6 @@ static void bcc_receive_buf(struct tty_struct *tty, const unsigned char *cp, cha
 	}
 
 	// TODO: remove all PRINTKNs
-#ifdef DRIVER_THROTTLING
-	if (!test_and_set_bit(TTY_THROTTLED, &tty->flags) &&
-			tty->driver->ops->throttle)
-		tty->driver->ops->throttle(tty);
-#endif
 	if (j == 0) {
 		DBG("No bytes to parse");
 		return;
@@ -433,7 +410,8 @@ static int perform_transaction(struct bcc_packet * pkt)
 		ret = -EFAULT; 	// is there a better return value for a timeout? e.g. -EBUSY?
 	} else if (ret == -ERESTARTSYS) {
 		ERR("Process was interrupted by a signal.");
-		flush_scheduled_work();
+		flush_workqueue(_the_bcc.parser_wkq);
+		flush_workqueue(_the_bcc.rx_wkq);
 	} else if (ret < 0) {	// Can this ever happen?
 		ERR("Transaction failed on 'send message' (Error).");
 		ret = -EFAULT;
@@ -625,11 +603,6 @@ static int bcc_open (struct tty_struct *tty)
 		DBG("No driver set in tty");
 	} 
 
-	/*	mutex_lock(&tty->termios_mutex);
-		if (test_and_clear_bit(TTY_THROTTLED, &tty->flags) && tty->ops->unthrottle)
-		tty->ops->unthrottle(tty);
-		mutex_unlock(&tty->termios_mutex);
-	 */
 	set_default_termios(tty); 
 
 	_the_bcc.rx_wkq = create_singlethread_workqueue("drbcc_rx_wkq");
@@ -651,7 +624,8 @@ void bcc_close (struct tty_struct *tty)
 	if(_the_bcc.opened)
 		return;	
 
-	flush_scheduled_work();
+	flush_workqueue(_the_bcc.parser_wkq);
+	flush_workqueue(_the_bcc.rx_wkq);
 	destroy_workqueue(_the_bcc.parser_wkq);
 	destroy_workqueue(_the_bcc.rx_wkq);
 
