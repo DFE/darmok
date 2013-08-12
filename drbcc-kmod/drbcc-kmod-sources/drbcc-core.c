@@ -616,7 +616,7 @@ static int bcc_open (struct tty_struct *tty)
  *	Close ldisc, doing all the cleanup	
  *	\param	tty 		representing serial port 
  */
-void bcc_close (struct tty_struct *tty)
+static void bcc_close (struct tty_struct *tty)
 {	
 	DBG("Close line discipline.");
 
@@ -643,7 +643,7 @@ void bcc_close (struct tty_struct *tty)
  *	\param  arg		arguments to system call	
  *	\return value passed by the tty's generic ioctl function
  */
-int bcc_ioctl(struct tty_struct* tty, struct file * file, unsigned int cmd, unsigned long arg) {
+static int bcc_ioctl(struct tty_struct* tty, struct file * file, unsigned int cmd, unsigned long arg) {
 	/* TODO: if(Sig___) { ..}  */
 	DBGF("HydraIP DRBCC driver: %s\n", __FUNCTION__);
 	return tty_mode_ioctl(_the_bcc.tty, file, cmd, arg);
@@ -715,7 +715,7 @@ void remove_device_entry(int minor) {
 }
 EXPORT_SYMBOL(remove_device_entry);
 
-int __drbcc_init(void) 
+static int __drbcc_init(void) 
 {
 	int err;
 
@@ -745,7 +745,7 @@ int __drbcc_init(void)
 	return 0;
 }
 
-void __drbcc_exit(void) {
+static void __drbcc_exit(void) {
 	int i;
 
 	printk(KERN_INFO "HydraIP DRBCC driver unloaded...\n");

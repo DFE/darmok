@@ -27,7 +27,7 @@
 
 static struct cdev cdev;
 static struct kfifo fifo;
-DEFINE_SPINLOCK(spin);
+static DEFINE_SPINLOCK(spin);
 
 static struct toggle toggle_t = {
 	.rx = 0,
@@ -39,7 +39,7 @@ static struct toggle toggle_t = {
 /* Note: Callback Method for asynchronous messages should kfree
  * retrieved memory
  */
-void drbcc_rcv_msg_async(struct bcc_packet *pkt)
+static void drbcc_rcv_msg_async(struct bcc_packet *pkt)
 {
 	unsigned char buf[MSG_MAX_BUF];
 	int ret;
@@ -61,7 +61,7 @@ void drbcc_rcv_msg_async(struct bcc_packet *pkt)
  *	\param 	file 	struct representing file with it's current state
  *	\return 0 on success, -EAGAIN if allocating memory for fifo buffer failed 	
  */
-int drbcc_raw_open(struct inode * ino, struct file * file) {	
+static int drbcc_raw_open(struct inode * ino, struct file * file) {	
 	register_async_callback(drbcc_rcv_msg_async);
 
 	return 0;
@@ -73,7 +73,7 @@ int drbcc_raw_open(struct inode * ino, struct file * file) {
  *	\param 	file 	struct representing file with it's current state
  *	\return negative error value if fifo buffer in private data pointer was null, 0 else
  */
-int drbcc_raw_close(struct inode * inode, struct file * file)
+static int drbcc_raw_close(struct inode * inode, struct file * file)
 {
 	register_async_callback(NULL);	// Unregister callback method
 
@@ -137,7 +137,7 @@ out:
  *	\return negative error on failure, 0 otherwise 
  */
 
-ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t size, loff_t * loff) {
+static ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t size, loff_t * loff) {
 	struct bcc_packet pkt = { 0 };
 	int ret = 0;
 	unsigned char buf[MSG_MAX_BUF];
@@ -229,7 +229,7 @@ ssize_t drbcc_raw_write (struct file * file, const char __user * user, size_t si
 	return size;
 }
 
-long drbcc_raw_ioctl(struct file * file, unsigned int cmd, unsigned long arg) {
+static long drbcc_raw_ioctl(struct file * file, unsigned int cmd, unsigned long arg) {
 	/* TODO: if(Sig___) { ..}  */
 	DBGF("HydraIP DRBCC driver: %s.\n", __FUNCTION__);
 	DBGF("Cmd: %d, arg: %ld ", cmd, arg );
@@ -245,7 +245,7 @@ static const struct file_operations drbcc_raw_fops = {
 	.unlocked_ioctl	= drbcc_raw_ioctl
 };
 
-int drbcc_raw_init_module(void) {
+static int drbcc_raw_init_module(void) {
 	int ret;
 	DBGF("HydraIP DRBCC RAW driver: %s.\n", __FUNCTION__);
 
@@ -264,7 +264,7 @@ int drbcc_raw_init_module(void) {
 	return ret;
 }
 
-void drbcc_raw_cleanup_module(void) {
+static void drbcc_raw_cleanup_module(void) {
 	DBGF("Unload HydraIP DRBCC RAW driver: %s.\n", __FUNCTION__);
 
 	kfifo_free(&fifo);
