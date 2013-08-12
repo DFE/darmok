@@ -28,4 +28,23 @@ config DARMOK_WATCHDOG
 	help
       Driver for communication with the BCTRL watchdog
 
+config DARMOK_WATCHDOG_TIMEOUT
+	int "Watchdog timeout in seconds"
+	depends on DARMOK_WATCHDOG
+	range 1 65536
+	default 60
+	help
+	  If no ping send within DARMOK_WATCHDOG_TIMEOUT, then a reboot is performed.
+
+config DARMOK_WATCHDOG_KEEPALIVE
+	int "Watchdog keep alive interval in seconds"
+	depends on DARMOK_WATCHDOG
+	range 0 65536
+	default 30
+	help
+	 The driver sends automatically every DARMOK_WATCHDOG_KEEPALIVE time a ping
+	 with DARMOK_WATCHDOG_TIMEOUT timeout. If this value set to 0, then the
+	 automatic watchdog service is disabled and the user space must handle the
+	 watchdog.
+
 endif # DARMOK_CORE

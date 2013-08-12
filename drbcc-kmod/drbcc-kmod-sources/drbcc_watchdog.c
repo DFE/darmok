@@ -18,17 +18,13 @@
 
 #include "drbcc.h"
 
-#define DEFAULT_TIMEOUT 60         /* default timeout in seconds */
-#define WD_TIMEOUT_MAX 0xFFFF
-
-/* These values should be altered in the config */
-#define DARMOK_WD_TIMEOUT 60
-#define WD_KEEPALIVE_TIME 30
+#define DEFAULT_TIMEOUT   CONFIG_DARMOK_WATCHDOG_TIMEOUT       /* default timeout in seconds */
+#define WD_TIMEOUT_MAX    0xFFFF                               /* maximum watchdog timeout */
+#define WD_KEEPALIVE_TIME CONFIG_DARMOK_WATCHDOG_KEEPALIVE     /* watchdog keepalive interval */
 
 #define WD_MAGIC	'V'
 
 #define BWD 		"[DRBCC-WATCHDOG] "
-
 
 /* Function declarations */
 static void blocking_wd_keepalive_thread(struct work_struct *work);
@@ -36,7 +32,7 @@ static void blocking_wd_keepalive_thread(struct work_struct *work);
 
 static uint16_t timeout = DEFAULT_TIMEOUT;
 static struct workqueue_struct *timeout_keepalive_wq;	
-DECLARE_DELAYED_WORK(tm_work, blocking_wd_keepalive_thread);
+static DECLARE_DELAYED_WORK(tm_work, blocking_wd_keepalive_thread);
 
 /*
  * Kick the watchdog.
@@ -94,11 +90,13 @@ static int drbcc_wd_set_timeout(int t)
 
 static int wd_timer_start(void)
 {
-	DBG("The Darmok Watchdog Driver starts kicking the watchdog\n");
-	timeout = DEFAULT_TIMEOUT;
-	wd_keepalive();
+	if(WD_KEEPALIVE_TIME >0) {
+		DBG("The Darmok Watchdog Driver starts kicking the watchdog\n");
+		timeout = DEFAULT_TIMEOUT;
+		wd_keepalive();
 
-	queue_delayed_work(timeout_keepalive_wq, &tm_work, WD_KEEPALIVE_TIME*HZ);
+		queue_delayed_work(timeout_keepalive_wq, &tm_work, WD_KEEPALIVE_TIME*HZ);
+	}
 	return 0;
 }
 
@@ -230,8 +228,6 @@ static int __init drbcc_wd_init_module(void)
 	int ret = 0;
 
 	DBGF("HydraIP DRBCC Watchdog driver: %s.\n", __FUNCTION__);
-
-	// TODO: Set timeout
 
 	ret = misc_register(&drbcc_wd_miscdev);
 
