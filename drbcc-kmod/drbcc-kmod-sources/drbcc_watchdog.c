@@ -1,7 +1,7 @@
 /** 
  *  \file 	drbcc_wd.c	
  *  \brief	DRBCC Watchdog implementation, depends on the DRBCC CORE functionality/module
- *  \author 	Christina Quast
+ *  \author 	Christina Quast, DResearch Fahrzeugelektronik GmbH
  *
  * (C) 2013 DResearch Fahrzeugelektronik GmbH
  *
@@ -25,32 +25,18 @@
 #define DARMOK_WD_TIMEOUT 60
 #define WD_KEEPALIVE_TIME 30
 
-/*
- * When the userspace stops kicking the watchdog this kernel driver
- * has to take care for this, and the other way round.
- */
-#define us_wd_stop kernel_wd_start
-#define us_wd_start kernel_wd_stop
-
 #define WD_MAGIC	'V'
 
 #define BWD 		"[DRBCC-WATCHDOG] "
 
 
 /* Function declarations */
-static int wd_keepalive(void);
 static void blocking_wd_keepalive_thread(struct work_struct *work);
 
 
 static uint16_t timeout = DEFAULT_TIMEOUT;
-static void wd_timer_call(unsigned long data);
-static DEFINE_TIMER(timer, wd_timer_call, 0, 0); /* timer for kicking the hw watchdog */
-static unsigned long next_heartbeat;	/* time in jiffies till next heartbeat */
-/* The timer calls wd_timer_call in interrupt context, which calls a blocking function */
 static struct workqueue_struct *timeout_keepalive_wq;	
-DECLARE_WORK(tm_work, blocking_wd_keepalive_thread);
-
-static uint8_t user_wd_active;
+DECLARE_DELAYED_WORK(tm_work, blocking_wd_keepalive_thread);
 
 /*
  * Kick the watchdog.
@@ -64,7 +50,7 @@ static int wd_keepalive(void)
 	struct bcc_packet pkt = {
 		.cmd        =  DRBCC_REQ_HEARTBEAT,
 		.payloadlen = 2,
-	};	
+	};
 
 	pkt.data[0] = timeout >> 8;
 	pkt.data[1] = timeout;
@@ -91,17 +77,8 @@ static int wd_keepalive(void)
 static void blocking_wd_keepalive_thread(struct work_struct *work)
 {
 	wd_keepalive();
+	queue_delayed_work(timeout_keepalive_wq, &tm_work, WD_KEEPALIVE_TIME*HZ);
 }
-
-static void wd_timer_call(unsigned long data)
-{
-	if (!(time_before(jiffies, next_heartbeat)) && (!user_wd_active)) {
-		queue_work(timeout_keepalive_wq, &tm_work);
-		next_heartbeat = jiffies + WD_KEEPALIVE_TIME*HZ;
-		mod_timer(&timer, next_heartbeat);
-	}
-}
-
 
 static int drbcc_wd_set_timeout(int t)
 {
@@ -115,34 +92,27 @@ static int drbcc_wd_set_timeout(int t)
 	return 0;
 }
 
-static int kernel_wd_start(void)
+static int wd_timer_start(void)
 {
 	DBG("The Darmok Watchdog Driver starts kicking the watchdog\n");
-	/* Stopping the userspace watchdog.
-	   This means the drbcc-watchdog driver is now responsible for
-	   kicking the watchdog from time to time 
-	 */
 	timeout = DEFAULT_TIMEOUT;
-	user_wd_active = 0;
 	wd_keepalive();
 
-	next_heartbeat = jiffies + WD_KEEPALIVE_TIME*HZ;
-	mod_timer(&timer, next_heartbeat);
+	queue_delayed_work(timeout_keepalive_wq, &tm_work, WD_KEEPALIVE_TIME*HZ);
 	return 0;
 }
 
-static int kernel_wd_stop(void) 
+static int wd_timer_stop(void) 
 {
-	user_wd_active = 1;
-	del_timer(&timer);
-	flush_scheduled_work();
+	cancel_delayed_work(&tm_work);
+	flush_workqueue(timeout_keepalive_wq);
 	return 0;
 }
 
 /**
- *		drbcc_wd_write - Write to watchdog device
- *		Any character but one that is written to the watchdog device is interpreted 
- * 		as a keepalive signal. Just a 'V' is interpreted as a stop signal.
+ *  drbcc_wd_write - Write to watchdog device
+ *  Any character but one that is written to the watchdog device is interpreted 
+ *  as a keepalive signal. Just a 'V' is interpreted as a stop signal.
  */
 static ssize_t drbcc_wd_write(struct file *file, const char __user *buf,
 		size_t count, loff_t *ppos)
@@ -158,8 +128,9 @@ static ssize_t drbcc_wd_write(struct file *file, const char __user *buf,
 		if (get_user(c, buf + offset)) {
 			return -EFAULT;
 		}
-		if (c == WD_MAGIC)
-			kernel_wd_stop();
+		if (c == WD_MAGIC) {
+			wd_timer_start();
+		}
 	}
 
 	return count;
@@ -167,7 +138,8 @@ static ssize_t drbcc_wd_write(struct file *file, const char __user *buf,
 
 static long drbcc_wd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) 
 {
-	int new_timeout, options = timeout;
+	int new_timeout;
+	int options;
 
 	void __user *argp = (void __user *)arg;
 	int __user *p = argp;
@@ -183,14 +155,14 @@ static long drbcc_wd_ioctl(struct file *filp, unsigned int cmd, unsigned long ar
 					/* The kernel drbcc watchdog is responsible 
 					 * for keeping track of the time now
 					 */
-					kernel_wd_start();
+					wd_timer_start();
 					return 0;
 
 				case WDIOS_ENABLECARD:
 					/* The userspace wants to be responsible 
 					 * of kicking the watchdog periodically.
 					 */
-					kernel_wd_stop();
+					wd_timer_stop();
 					return 0;
 
 				default:
@@ -222,24 +194,29 @@ static long drbcc_wd_ioctl(struct file *filp, unsigned int cmd, unsigned long ar
 
 static int drbcc_wd_open(struct inode *inode, struct file *file)
 {
-	/* FIXME: Stop automatic watchdog functionality */
-	us_wd_start();
+	/* The userspace is responsible 
+	 * of kicking the watchdog periodically.
+	 */
+	wd_timer_stop();
 	return 0;
 }
 
 static int drbcc_wd_release(struct inode *inode, struct file *file)
 {
-	/* FIXME: Start automatic watchdog functionality */
-	us_wd_stop();
+	/* The kernel drbcc watchdog is responsible for keeping track 
+	 * of the time ONLY if the magic character 'V' has been received before,
+	 * or the user space watchdog was via ioctl() disabled.
+	 * No watchdog timer start here.
+	 */
 	return 0;
 }
 
 static const struct file_operations drbcc_wd_fops = {
-	.owner   		= THIS_MODULE,
-	.write			= drbcc_wd_write,
+	.owner   	= THIS_MODULE,
+	.write		= drbcc_wd_write,
 	.unlocked_ioctl	= drbcc_wd_ioctl,
-	.open			= drbcc_wd_open,
-	.release		= drbcc_wd_release,
+	.open		= drbcc_wd_open,
+	.release	= drbcc_wd_release,
 };
 
 static struct miscdevice drbcc_wd_miscdev = {
@@ -263,7 +240,7 @@ static int __init drbcc_wd_init_module(void)
 	}
 
 	timeout_keepalive_wq = create_singlethread_workqueue("timeout_blocking_keepalive_wq");
-	kernel_wd_start();
+	wd_timer_start();
 
 	return ret;
 }
@@ -272,11 +249,10 @@ static void __exit drbcc_wd_cleanup_module(void)
 {
 	DBGF("Unload HydraIP DRBCC Watchdog driver: %s.\n", __FUNCTION__);
 
-	flush_scheduled_work();
+	flush_workqueue(timeout_keepalive_wq);
 	destroy_workqueue(timeout_keepalive_wq);
 
 	misc_deregister(&drbcc_wd_miscdev);	
-	del_timer(&timer);
 }
 
 module_init(drbcc_wd_init_module);
