@@ -43,7 +43,7 @@ typedef enum { SEC, MIN, HOUR, DAY, DATE, MONTH, YEAR, PAYLOAD_LEN } PKTF_t;	/* 
  *	\param	rtc_tm		struct representing time
  *	\return negative value on failure, 0 on success 
  */
-int get_rtc_time(struct device *dev, struct rtc_time *rtc_tm)
+static int get_rtc_time(struct device *dev, struct rtc_time *rtc_tm)
 {
 	int ret = 0;
 	struct bcc_packet pkt = { 
