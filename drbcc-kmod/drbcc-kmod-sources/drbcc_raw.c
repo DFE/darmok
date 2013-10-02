@@ -51,8 +51,6 @@ static void drbcc_rcv_msg_async(struct bcc_packet *pkt)
 		ERR("Putting data to fifo failed.");
 	}
 	DBGF("Put asynchronous packet with cmd = 0x%x into fifo. fifolen = %d", pkt->cmd, kfifo_len(&fifo));
-
-	kfree(pkt);
 }
 
 /**

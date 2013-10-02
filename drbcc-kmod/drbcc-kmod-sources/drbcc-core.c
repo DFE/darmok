@@ -25,6 +25,8 @@
 
 #include "drbcc_core.h"
 
+static DEFINE_SPINLOCK(pkt_lock);
+static unsigned long flags;
 
 // TODO: maybe decrease count when closing the ldisc?
 extern int chrdev_open(struct inode * inode, struct file * filp);
@@ -36,7 +38,7 @@ static struct file filp;
  * Transactionbased: Request-response-logic
  * Keeps track of the toggle bits
  */
-static int perform_transaction(struct bcc_packet *pkt);
+static int perform_transaction(struct bcc_packet *pkt, struct bcc_packet * pkt_resp);
 
 /*
  * Layer 1 functions:
@@ -60,7 +62,6 @@ struct bcc_struct {
 	/****** For communication between Layer 1-and-2 only *****/
 	struct bcc_packet 	*resp;		
 
-	struct workqueue_struct	*rx_wkq;
 	struct workqueue_struct	*parser_wkq;
 
 	void (*async_callback) (struct bcc_packet *);
@@ -164,11 +165,9 @@ static void parser_worker_thread(struct work_struct *work)
 /* typedef enum {
    RQ_STD, RQ_STD_ANS, RQ_WAIT_ANS, NONE
    } GLOBAL_L2_STATES;*/
-/* Attention: resp pointer has to be kfree'd! */
-static void rx_worker_thread(struct work_struct *work)
+static void rx_packet(struct bcc_packet *pkt)
 {
 	int i = 0;
-	struct bcc_packet *pkt = container_of(work, struct bcc_packet, work);
 
 	if (!pkt) {
 		printk(KERN_WARNING "DRBCC Packet pointer was null, something went terribly wrong!\n");
@@ -179,51 +178,43 @@ static void rx_worker_thread(struct work_struct *work)
 		DBG("*** l2_state = RQ_STD\n");
 		CMD_DEL_TBIT(pkt);
 		DBGF("pkt->cmd: 0x%x", pkt->cmd);
-		_the_bcc.resp = pkt;
-		_the_bcc.resp->cmd = DRBCC_CMD_ILLEGAL; 
-		pkt = NULL;
-		DBGF("(1) rep>cmd: 0x%x", _the_bcc.resp->cmd);
+		spin_lock_irqsave(&pkt_lock, flags);
+		if (_the_bcc.resp) { 
+			*_the_bcc.resp = *pkt;
+			_the_bcc.resp->cmd = DRBCC_CMD_ILLEGAL; 
+		}
+		spin_unlock_irqrestore(&pkt_lock, flags);
 		toggle_t.tx = !toggle_t.tx;	
 		DBGF("transaction_ready++; new toggle = %d \n", toggle_t.tx );
 		transaction_ready = 1;	
 		DBG("transaction_ready = 1, RQ_WAIT");
-		DBGF("(2) rep>cmd: 0x%x", _the_bcc.resp->cmd);
 		wake_up_interruptible(&wq);	
 		l2_state = NONE;
-		return;
-	}
-
-	if (l2_state == RQ_STD_ANS && CMD_WITHOUT_TBIT(pkt->cmd) == DRBCC_ACK) {
+	} else if (l2_state == RQ_STD_ANS && CMD_WITHOUT_TBIT(pkt->cmd) == DRBCC_ACK) {
 		DBG("*** l2_state = RQ_STD_ANS\n");
 		toggle_t.tx = !toggle_t.tx;	
 		DBGF("new tx_toggle = %d\n", toggle_t.tx );
 		l2_state = RQ_WAIT_ANS;
-		goto freeptr;
-	}
-
-	if(l2_state == RQ_WAIT_ANS) {
+	} else if (l2_state == RQ_WAIT_ANS) {
 		DBG("*** l2_state = RQ_WAIT_ANS\n");
-		if (toggle_bit_save_rx(pkt) < 0) {
-			goto freeptr;
+		if (toggle_bit_save_rx(pkt) >= 0) {
+			CMD_DEL_TBIT(pkt);
+			spin_lock_irqsave(&pkt_lock, flags);
+			if (_the_bcc.resp) { *_the_bcc.resp = *pkt; }
+			spin_unlock_irqrestore(&pkt_lock, flags);
+			pkt = NULL;
+			l2_state = NONE;
+			transaction_ready = 1;		
+			DBG("transaction_ready = 1, RQ_WAIT_ANS");
+			wake_up_interruptible(&wq);	
 		} 
-		CMD_DEL_TBIT(pkt);
-		_the_bcc.resp = pkt; 
-		pkt = NULL;
-		l2_state = NONE;
-		transaction_ready = 1;		
-		DBG("transaction_ready = 1, RQ_WAIT_ANS");
-		wake_up_interruptible(&wq);	
-		return;
-	}
-
 	/* Asynchronous messages */ 
-	if ((toggle_bit_save_rx(pkt) < 0) || (_the_bcc.async_callback == NULL)) {
+	} else if ((toggle_bit_save_rx(pkt) < 0) || (_the_bcc.async_callback == NULL)) {
 		if(_the_bcc.async_callback == NULL) {
 			DBG("_the_bcc.async_callback == NULL");
 		} else {
 			DBGF("Msg with false toggle bit: 0x%x.", toggle_t.rx); 
 		}
-		goto freeptr;
 	} else {
 		DBG("Start async msg loop.");
 		for(i = 0; i < sizeof(async_cmd)/sizeof(char); i++) {
@@ -233,39 +224,22 @@ static void rx_worker_thread(struct work_struct *work)
 				CMD_DEL_TBIT(pkt);
 				_the_bcc.async_callback(pkt);
 				DBGF("Received async msg: %d (0x%x)", pkt->cmd, pkt->cmd);
-				return;		// Callback Funktion kfree's memory
+				return;
 			}
 		}
 	}
 
-	/* If nobody waited for a packet, the packet memory is also just kfree'd */ 
-freeptr:
 	DBGF("State = %d, cmd = 0x%x", l2_state, pkt->cmd);
-	DBGF("Free pointer to pkt (%p)\n", pkt);
-	kfree(pkt);
-	pkt = NULL;
-	//	_the_bcc.resp = NULL;
 }
 
 static void receive_msg(unsigned char *buf, uint8_t len)
 {
 	uint8_t			readc = 0;
 	int 			ret = 0;
-	static struct bcc_packet *curr_pkt = NULL;
+	static struct bcc_packet curr_pkt = { 0 };
 
 	do {
-		if (!curr_pkt) {
-			curr_pkt = (struct bcc_packet *) kmalloc(sizeof(struct bcc_packet), GFP_KERNEL);
-			DBGF("Kmalloced curr_pkt (%p)\n", curr_pkt);
-
-			if (!curr_pkt) {
-				DBG("Out of memory!");
-				return;
-			}
-			memset(curr_pkt, 0, sizeof(struct bcc_packet));		
-		} /* else: packet was already partly parsed */
-
-		ret = deserialize_packet(&buf[readc], curr_pkt, len-readc);
+		ret = deserialize_packet(&buf[readc], &curr_pkt, len-readc);
 
 		if(ret > 0) {
 			DBG("Succeeded parsing message to struct bcc_packet");
@@ -274,20 +248,14 @@ static void receive_msg(unsigned char *buf, uint8_t len)
 			break;
 		} else if(ret < 0) {
 			DBG("Failure while parsing packet.");
-			DBGF("%s: Free packet with adress %p", __FUNCTION__, curr_pkt);
-			kfree(curr_pkt);
-			curr_pkt = NULL;
+			memset(&curr_pkt, 0, sizeof(struct bcc_packet));		
 			break;
 		}	
 
-		INIT_WORK(&(curr_pkt->work), rx_worker_thread);
-		queue_work(_the_bcc.rx_wkq, &curr_pkt->work);
+		rx_packet(&curr_pkt);
+		memset(&curr_pkt, 0, sizeof(struct bcc_packet));		
 		readc += ret;
 		DBGF("readc = %d, len: %d", readc, len);
-
-		DBGF("______Command before Schedule: %d (0x%x)__________\n", curr_pkt->cmd, curr_pkt->cmd);
-		curr_pkt = NULL;
-		schedule();
 
 	} while(readc < len); 
 }
@@ -360,13 +328,14 @@ static void bcc_receive_buf(struct tty_struct *tty, const unsigned char *cp, cha
 static int synchronize(void)
 {
 	int ret = 0;
+	struct bcc_packet pkt_resp = { 0 };
 	struct bcc_packet pkt = { 
 		.cmd = DRBCC_SYNC | SHIFT_TBIT(1), 
 		.payloadlen = 0 };
 
 
 	l2_state = RQ_STD;
-	ret = perform_transaction(&pkt);
+	ret = perform_transaction(&pkt, &pkt_resp);
 	DBG("***** Transmitted sync");	
 
 	if (ret < 0) {
@@ -377,19 +346,21 @@ static int synchronize(void)
 	toggle_t.rx = 0;
 	toggle_t.tx = 0;
 
-	DBGF("Free pkt with adress (%p)", _the_bcc.resp);
-	kfree(_the_bcc.resp);
-	_the_bcc.resp = NULL;
 	return ret;
 }
 
 #define MAX_FAILED_PKT 3
-static int perform_transaction(struct bcc_packet * pkt) 
+static int perform_transaction(struct bcc_packet * pkt, struct bcc_packet * pkt_resp) 
 {
 	int ret = 0;
 
 	WARN_ON(transaction_ready != 0);
 	transaction_ready = 0;
+
+	WARN_ON(_the_bcc.resp != 0);
+	spin_lock_irqsave(&pkt_lock, flags);
+	_the_bcc.resp = pkt_resp;
+	spin_unlock_irqrestore(&pkt_lock, flags);
 
 	ret = transmit_msg(pkt);
 
@@ -411,16 +382,18 @@ static int perform_transaction(struct bcc_packet * pkt)
 	} else if (ret == -ERESTARTSYS) {
 		ERR("Process was interrupted by a signal.");
 		flush_workqueue(_the_bcc.parser_wkq);
-		flush_workqueue(_the_bcc.rx_wkq);
 	} else if (ret < 0) {	// Can this ever happen?
 		ERR("Transaction failed on 'send message' (Error).");
 		ret = -EFAULT;
 	}
 	transaction_ready = 0;
 
+	spin_lock_irqsave(&pkt_lock, flags);
+	_the_bcc.resp = 0;
+	spin_unlock_irqrestore(&pkt_lock, flags);
+
 	return ret;
 }
-
 
 /**
  *	Send out packet over serial port, does all the maintenance of the state machine (exported symbol)	
@@ -433,6 +406,7 @@ int transmit_packet(struct bcc_packet * pkt)
 {
 	uint8_t resp_cmd;
 	int ret = 0;
+	struct bcc_packet pkt_resp;
 
 	if (!_the_bcc.tty) {
 		DBG("DRBCC-Core not ready yet.\n");
@@ -464,11 +438,9 @@ int transmit_packet(struct bcc_packet * pkt)
 		DBG("**** Send transaction without to expect ans\n");
 		l2_state = RQ_STD;
 	}
-	ret = perform_transaction(pkt);
+	ret = perform_transaction(pkt, &pkt_resp);
 	DBGF("Ret: %d", ret);
-
-	// FIXME: Mean hack, because actually !(_the_bcc.resp) should be signalised by a negative ret value :(	
-	if ((ret < 0) || !(_the_bcc.resp)) {
+	if (ret < 0) {
 		printk(KERN_NOTICE "Transaction of packet with command 0x%x failed with error value %x\n", pkt->cmd, ret);
 		pkt->cmd = DRBCC_CMD_ILLEGAL;
 		goto exit;	
@@ -478,24 +450,19 @@ int transmit_packet(struct bcc_packet * pkt)
 		DBG("Expected no answer for my command. Just returning after receiving Ack.");
 		pkt->cmd = DRBCC_CMD_ILLEGAL;
 		goto exit;
-	} else if (_the_bcc.resp->cmd != resp_cmd) {
-		printk(KERN_NOTICE "Received packet with wrong response command: 0x%x\n", _the_bcc.resp->cmd);
+	} else if (pkt_resp.cmd != resp_cmd) {
+		printk(KERN_NOTICE "Received packet with wrong response command: 0x%x\n", pkt_resp.cmd);
 		pkt->cmd = DRBCC_CMD_ILLEGAL;
 		ret = -EFAULT; 	/* TODO: is there a better err value for this? */
 		goto exit;
 	}
 
 	// TODO: How should I signal an invalid pkt to the upper layers?
-	*pkt = *(_the_bcc.resp);
+	*pkt = pkt_resp;
 
-	/* TODO: test auf memory leak */
-	DBGF("%s: Transaction was success. Free packet with adress %p", __FUNCTION__, _the_bcc.resp);
+	DBGF("%s: Transaction success.", __FUNCTION__);
 
 exit:
-	if (_the_bcc.resp) {
-		kfree(_the_bcc.resp);
-		_the_bcc.resp = NULL;
-	}
 	up(&sem_access);
 	DBG("sem_access semaphore is up now");
 
@@ -605,7 +572,6 @@ static int bcc_open (struct tty_struct *tty)
 
 	set_default_termios(tty); 
 
-	_the_bcc.rx_wkq = create_singlethread_workqueue("drbcc_rx_wkq");
 	_the_bcc.parser_wkq = create_singlethread_workqueue("drbcc_parser_wkq");
 
 	return 0;
@@ -625,9 +591,7 @@ static void bcc_close (struct tty_struct *tty)
 		return;	
 
 	flush_workqueue(_the_bcc.parser_wkq);
-	flush_workqueue(_the_bcc.rx_wkq);
 	destroy_workqueue(_the_bcc.parser_wkq);
-	destroy_workqueue(_the_bcc.rx_wkq);
 
 	_the_bcc.tty = NULL;
 
