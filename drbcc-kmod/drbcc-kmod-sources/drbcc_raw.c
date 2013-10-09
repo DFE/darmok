@@ -160,15 +160,24 @@ static ssize_t drbcc_raw_write (struct file * file, const char __user * user, si
 		return -EFAULT;
 	}
 
-
-	if(((CMD_WITHOUT_TBIT(pkt.cmd) == DRBCC_ACK) && (TBIT_OF_CMD(pkt.cmd) == SHIFT_TBIT(toggle_t.rx))) || (CMD_WITHOUT_TBIT(pkt.cmd) == DRBCC_SYNC_ANSWER)) {
-		DBG("Received ACK message.");
+	switch (CMD_WITHOUT_TBIT(pkt.cmd)) {
+	case DRBCC_ACK:
+		if (TBIT_OF_CMD(pkt.cmd) != SHIFT_TBIT(toggle_t.rx)) {
+			DBG("Received ACK with wrong toogle bit from user space.\n");
+		} else {
+			DBG("Received ACK from user space.");
+			toggle_t.rx = !toggle_t.rx;
+		}
+		return size;
+	case DRBCC_SYNC_ANSWER:
+		DBG("Received SYNC ANSWER from user space.");
 		toggle_t.rx = !toggle_t.rx;
 		return size;
+	default: break;
 	}
 
 	if(pkt.cmd == (DRBCC_SYNC | TOGGLE_BITMASK)) {
-		DBG("Received SYNC message.");
+		DBG("Received SYNC from user space.");
 		if (kfifo_in_spinlocked(&fifo, &(ACK_BUF_RX_1), ACK_LEN, &spin) < ACK_LEN) {
 			ERR("Putting ACK to fifo failed.");
 			return -EFAULT;
