@@ -420,13 +420,13 @@ int transmit_packet(struct bcc_packet * pkt)
 
 	if(_the_bcc.initial) {
 		DBG("Initial call to transmit_packet, therefore syncing");
-		_the_bcc.initial = 0;
 		ret = synchronize();
 		if (ret < 0) {
 			ERR("**** Syncing failed");
-			_the_bcc.initial = 1;
+			up(&sem_access);
 			return ret;
-		}	
+		}
+		_the_bcc.initial = 0;
 	}
 
 	resp_cmd = RSP_CMD(pkt->cmd);
