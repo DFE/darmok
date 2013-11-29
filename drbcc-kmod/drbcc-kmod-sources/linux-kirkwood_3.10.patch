@@ -1,6 +1,6 @@
-From 0597cd7b9a846d26149099c52644efa719143714 Mon Sep 17 00:00:00 2001
+From 94ab2777393a9857b36076c7d50c7ce6c0ca68fe Mon Sep 17 00:00:00 2001
 From: Mario Schuknecht <mario.schuknecht@dresearch-fe.de>
-Date: Wed, 27 Nov 2013 09:40:07 +0100
+Date: Fri, 29 Nov 2013 16:04:52 +0100
 Subject: [PATCH] Inject N_BCC into standard Linux kernel code
 
 Signed-off-by: Mario Schuknecht <mario.schuknecht@dresearch-fe.de>
@@ -9,10 +9,9 @@ Signed-off-by: Mario Schuknecht <mario.schuknecht@dresearch-fe.de>
  drivers/Makefile         |  1 +
  drivers/tty/tty_io.c     | 19 ++++++++++++++++++-
  drivers/tty/tty_ldisc.c  |  8 ++++++--
- fs/char_dev.c            |  3 ++-
  include/linux/tty.h      |  2 +-
  include/uapi/linux/tty.h |  1 +
- 7 files changed, 31 insertions(+), 5 deletions(-)
+ 6 files changed, 29 insertions(+), 4 deletions(-)
 
 diff --git a/drivers/Kconfig b/drivers/Kconfig
 index 9953a42..b278cf1 100644
@@ -92,27 +91,6 @@ index 1afe192..1a2792d 100644
  	if (IS_ERR(ld))
  		panic("n_tty: init_tty");
  	tty->ldisc = ld;
-diff --git a/fs/char_dev.c b/fs/char_dev.c
-index afc2bb6..127bc59 100644
---- a/fs/char_dev.c
-+++ b/fs/char_dev.c
-@@ -366,7 +366,7 @@ void cdev_put(struct cdev *p)
- /*
-  * Called every time a character special file is opened
-  */
--static int chrdev_open(struct inode *inode, struct file *filp)
-+int chrdev_open(struct inode *inode, struct file *filp)
- {
- 	struct cdev *p;
- 	struct cdev *new = NULL;
-@@ -583,6 +583,7 @@ EXPORT_SYMBOL(register_chrdev_region);
- EXPORT_SYMBOL(unregister_chrdev_region);
- EXPORT_SYMBOL(alloc_chrdev_region);
- EXPORT_SYMBOL(cdev_init);
-+EXPORT_SYMBOL(chrdev_open);
- EXPORT_SYMBOL(cdev_alloc);
- EXPORT_SYMBOL(cdev_del);
- EXPORT_SYMBOL(cdev_add);
 diff --git a/include/linux/tty.h b/include/linux/tty.h
 index 8780bd2..68d75d2 100644
 --- a/include/linux/tty.h

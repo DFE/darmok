@@ -22,7 +22,6 @@
 #include <linux/semaphore.h>
 #include <linux/wait.h>
 #include <linux/sched.h>
-#include <linux/usb.h>
 
 #include "drbcc_core.h"
 
@@ -30,10 +29,10 @@ static DEFINE_SPINLOCK(pkt_lock);
 static unsigned long flags;
 
 // TODO: maybe decrease count when closing the ldisc?
-extern int chrdev_open(struct inode * inode, struct file * filp);
-static struct inode ino; 
-static struct file filp;
-static int bctrl_port_open = 0;
+static void open_port(struct work_struct *work);
+static struct workqueue_struct *open_port_wq = 0;
+static DECLARE_DELAYED_WORK(open_port_work, open_port);
+static struct file *filp = 0;
 
 /*
  * Layer 2 functions:
@@ -681,47 +680,30 @@ void remove_device_entry(int minor) {
 }
 EXPORT_SYMBOL(remove_device_entry);
 
-static void usbdev_add(struct usb_device *udev)
+static void open_port(struct work_struct *work)
 {
-	int err;
+	static int count = 0;
+	char *bctrl_port = "/dev/ttyUSB1";
 
-	printk("darmok: usb device add event: vendor 0x%04x product 0x%04x\n", udev->descriptor.idVendor, udev->descriptor.idProduct);
-
-	if(!bctrl_port_open) {
-		memset(&ino, 0, sizeof(ino));
-		memset(&filp, 0, sizeof(filp));
-		ino.i_rdev = MKDEV(188, 1);
-		filp.f_u.fu_list.next = &filp.f_u.fu_list;
-		filp.f_u.fu_list.prev = &filp.f_u.fu_list;
-
-		err = chrdev_open(&ino, &filp);
-		if (0 != err) {
-			printk(KERN_WARNING "Open device %d:%d failed: %d\n", MAJOR(ino.i_rdev), MINOR(ino.i_rdev), err);
+	if(IS_ERR_OR_NULL(filp)) {
+		filp = filp_open(bctrl_port, O_RDWR, 0);
+		if(IS_ERR(filp)) {
+			if(count > 600) {
+				printk(KERN_WARNING "[drbcc] Open port '%s' failed. (error: %ld)\n", bctrl_port, PTR_ERR(filp));
+			} else {
+				count++;
+				if(!open_port_wq) {
+					open_port_wq = create_singlethread_workqueue("darmok_open_port_wq");
+				}
+				queue_delayed_work(open_port_wq, &open_port_work, HZ/10);
+			}
 		} else {
-			bctrl_port_open = 1;
+			printk(KERN_INFO "[drbcc] Open port '%s'\n", bctrl_port);
 		}
+	} else {
+		printk(KERN_INFO "[drbcc] '%s' already open\n", bctrl_port);
 	}
 }
-
-static int usb_notify(struct notifier_block *self, unsigned long action, void *dev)
-{
-	switch (action) {
-	case USB_DEVICE_ADD:
-		usbdev_add(dev);
-		break;
-	case USB_DEVICE_REMOVE:
-		break;
-	case USB_BUS_ADD:
-		break;
-	case USB_BUS_REMOVE:
-		break;
-	}
-	return NOTIFY_OK;
-}
-
-static struct notifier_block usb_nb = {
-	 .notifier_call =        usb_notify,
-};
 
 static int __drbcc_init(void) 
 {
@@ -737,7 +719,7 @@ static int __drbcc_init(void)
 	}
 
 	/* hikirk machine specific boardcontroller connection */
-	usb_register_notify(&usb_nb);
+	open_port(0);
 	return 0;
 }
 
@@ -759,7 +741,11 @@ static void __drbcc_exit(void) {
 
 		msleep_interruptible(100);
 	}
-	usb_unregister_notify(&usb_nb);
+	if(open_port_wq) {
+		flush_workqueue(open_port_wq);
+		destroy_workqueue(open_port_wq);
+		open_port_wq = 0;
+	}
 	/* then */
 	if ((i = tty_unregister_ldisc(N_BCC)) < 0) {
 		printk(KERN_ERR "DRBCC: can't unregister line discipline (err = %d)\n", i);
