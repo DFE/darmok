@@ -147,7 +147,7 @@ static int drbcc_rtc_probe(struct platform_device *plat_dev)
 	return ret;
 }
 
-static int __devexit drbcc_rtc_remove(struct platform_device *plat_dev)
+static int drbcc_rtc_remove(struct platform_device *plat_dev)
 {
 	struct rtc_device *rtc = platform_get_drvdata(plat_dev);
 
@@ -159,7 +159,7 @@ static int __devexit drbcc_rtc_remove(struct platform_device *plat_dev)
 
 static struct platform_driver drbcc_rtc_drv = {
 	.probe  = drbcc_rtc_probe,
-	.remove = __devexit_p(drbcc_rtc_remove),
+	.remove = drbcc_rtc_remove,
 	.driver = {	
 		.name = MODULE_NAME,
 		.owner = THIS_MODULE,

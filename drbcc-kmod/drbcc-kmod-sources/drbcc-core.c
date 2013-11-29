@@ -22,6 +22,7 @@
 #include <linux/semaphore.h>
 #include <linux/wait.h>
 #include <linux/sched.h>
+#include <linux/usb.h>
 
 #include "drbcc_core.h"
 
@@ -32,6 +33,7 @@ static unsigned long flags;
 extern int chrdev_open(struct inode * inode, struct file * filp);
 static struct inode ino; 
 static struct file filp;
+static int bctrl_port_open = 0;
 
 /*
  * Layer 2 functions:
@@ -494,12 +496,12 @@ static void bcc_set_termios (struct tty_struct *tty, struct ktermios * old)
 		}
 		tty->icanon = (L_ICANON(tty) != 0); 
 	 */
-	tty->termios = &tty_std_termios;
+	tty->termios = tty_std_termios;
 }
 
 static void set_default_termios(struct tty_struct *tty) {
 	//tty->termios = &tty_std_termios;
-	struct ktermios *tios = tty->termios;
+	struct ktermios *tios = &tty->termios;
 
 
 	/* set terminal raw like cfmakeraw does (see manpage) */
@@ -679,6 +681,48 @@ void remove_device_entry(int minor) {
 }
 EXPORT_SYMBOL(remove_device_entry);
 
+static void usbdev_add(struct usb_device *udev)
+{
+	int err;
+
+	printk("darmok: usb device add event: vendor 0x%04x product 0x%04x\n", udev->descriptor.idVendor, udev->descriptor.idProduct);
+
+	if(!bctrl_port_open) {
+		memset(&ino, 0, sizeof(ino));
+		memset(&filp, 0, sizeof(filp));
+		ino.i_rdev = MKDEV(188, 1);
+		filp.f_u.fu_list.next = &filp.f_u.fu_list;
+		filp.f_u.fu_list.prev = &filp.f_u.fu_list;
+
+		err = chrdev_open(&ino, &filp);
+		if (0 != err) {
+			printk(KERN_WARNING "Open device %d:%d failed: %d\n", MAJOR(ino.i_rdev), MINOR(ino.i_rdev), err);
+		} else {
+			bctrl_port_open = 1;
+		}
+	}
+}
+
+static int usb_notify(struct notifier_block *self, unsigned long action, void *dev)
+{
+	switch (action) {
+	case USB_DEVICE_ADD:
+		usbdev_add(dev);
+		break;
+	case USB_DEVICE_REMOVE:
+		break;
+	case USB_BUS_ADD:
+		break;
+	case USB_BUS_REMOVE:
+		break;
+	}
+	return NOTIFY_OK;
+}
+
+static struct notifier_block usb_nb = {
+	 .notifier_call =        usb_notify,
+};
+
 static int __drbcc_init(void) 
 {
 	int err;
@@ -692,20 +736,8 @@ static int __drbcc_init(void)
 		return err;
 	}
 
-	memset(&ino, 0, sizeof(ino));
-	memset(&filp, 0, sizeof(filp));
-	ino.i_rdev = MKDEV(252, 1);
-	filp.f_u.fu_list.next = &filp.f_u.fu_list;
-	filp.f_u.fu_list.prev = &filp.f_u.fu_list;
-
-	if (!(err = chrdev_open(&ino, &filp))) {
-		printk(KERN_WARNING "Opening device ttyO1 failed.\n");
-		return err;
-	}
-
-	printk ("ended opening dev-file");	
-
-	DBG("Test debug");	
+	/* hikirk machine specific boardcontroller connection */
+	usb_register_notify(&usb_nb);
 	return 0;
 }
 
@@ -727,6 +759,7 @@ static void __drbcc_exit(void) {
 
 		msleep_interruptible(100);
 	}
+	usb_unregister_notify(&usb_nb);
 	/* then */
 	if ((i = tty_unregister_ldisc(N_BCC)) < 0) {
 		printk(KERN_ERR "DRBCC: can't unregister line discipline (err = %d)\n", i);
