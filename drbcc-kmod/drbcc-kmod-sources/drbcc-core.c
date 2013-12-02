@@ -30,7 +30,6 @@ static unsigned long flags;
 
 // TODO: maybe decrease count when closing the ldisc?
 static void open_port(struct work_struct *work);
-static struct workqueue_struct *open_port_wq = 0;
 static DECLARE_DELAYED_WORK(open_port_work, open_port);
 static struct file *filp = 0;
 
@@ -688,15 +687,11 @@ static void open_port(struct work_struct *work)
 	if(IS_ERR_OR_NULL(filp)) {
 		filp = filp_open(bctrl_port, O_RDWR, 0);
 		if(IS_ERR(filp)) {
-			if(count > 600) {
-				printk(KERN_WARNING "[drbcc] Open port '%s' failed. (error: %ld)\n", bctrl_port, PTR_ERR(filp));
-			} else {
-				count++;
-				if(!open_port_wq) {
-					open_port_wq = create_singlethread_workqueue("darmok_open_port_wq");
-				}
-				queue_delayed_work(open_port_wq, &open_port_work, HZ/10);
+			count++;
+			if((count%30) == 0) {
+				printk(KERN_INFO "[drbcc] Open port '%s' failed (error: %ld). Try it on.\n", bctrl_port, PTR_ERR(filp));
 			}
+			schedule_delayed_work(&open_port_work, HZ/10);
 		} else {
 			printk(KERN_INFO "[drbcc] Open port '%s'\n", bctrl_port);
 		}
@@ -740,11 +735,6 @@ static void __drbcc_exit(void) {
 			break;
 
 		msleep_interruptible(100);
-	}
-	if(open_port_wq) {
-		flush_workqueue(open_port_wq);
-		destroy_workqueue(open_port_wq);
-		open_port_wq = 0;
 	}
 	/* then */
 	if ((i = tty_unregister_ldisc(N_BCC)) < 0) {
